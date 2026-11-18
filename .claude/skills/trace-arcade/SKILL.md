@@ -29,7 +29,7 @@ TRACE_OUT=rc_prof TRACE_FRAMES=21600 PROFILE_FROM=300 HOLD="ffb242=28" \
   IDLE="17ba-17cc,17e8-17fa,1156-1166" SUBWAIT="3ef6-3f02,3f2a-3f36,763e-7646,35ae-35ba,7620-762a,7680-768a" \
   mame robocop -rompath roms -video none -sound none -skip_gameinfo -nothrottle \
   -seconds_to_run 400 -autoboot_script ../../tools/mame/dec0_profile.lua > rc_prof/mame.log 2>&1
-python3 -I ../../tools/analysis/profile_report.py rc_prof ../out/robocop_prg/functions.tsv
+python3 -I ../../tools/analysis/profile_report.py rc_prof ../out/robocop_map/functions.tsv
 ```
 
 - `profile_frames.csv` has, per frame, the samples taken, those in the frame wait loops (`IDLE`), those serving the HuC6280 (`SUBWAIT`: waiting for it and copying objects to and from it) and those inside the VBlank handler. Cycles = samples ÷ samples in the frame × 174,080.

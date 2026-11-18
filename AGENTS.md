@@ -36,7 +36,7 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 
 ## Environment
 
-- MAME 0.289 and `m68k-elf-binutils` from Homebrew. Ghidra needs a Java 21 runtime in `JAVA_HOME`.
+- MAME 0.289 and `m68k-elf-binutils` from Homebrew. Ghidra 12.2 is at `/opt/homebrew/opt/ghidra/libexec` and needs `JAVA_HOME=/opt/homebrew/opt/openjdk@25` (it refuses Java 21).
 - Python helpers that need `capstone` or `Pillow` run from `analysis/venv/bin/python3`.
 - The user's `robocop.zip` holds the two video PROMs at twice MAME's size under shorter names; `tools/prep_roms.py` writes a set MAME verifies to `analysis/mame/roms/`. Run MAME from `analysis/mame` with `-rompath roms`.
 
