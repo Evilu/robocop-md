@@ -21,15 +21,18 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 | Path | Contents |
 |---|---|
 | `docs/` | Research documents and the port plan |
+| `src/hal.s` | The Mega Drive hardware layer: boot, VBlank, pad, and the HuC6280's two jobs (GNU as, Motorola operand syntax, `\|` comments) |
+| `build_md.py` | Builds the Mega Drive ROM from the user's `robocop.zip` (calls `tools/build/build.py`) |
+| `test/roms/md/` (ignored) | Built ROMs for the user to try |
 | `tools/prep_roms.py` | Builds flat program and graphics images, and a MAME-ready ROM folder, from the user's sets |
 | `tools/ghidra/` | Headless Ghidra import, seeding and C export |
-| `tools/mame/` | Lua scripts: arcade trace, profiler, hardware access map and sound probe; Mega Drive VDP trace |
-| `tools/analysis/` | Static code and hardware map, trace summaries, profile report, VDP dump renderer, 68000 disassembler |
+| `tools/mame/` | Lua scripts: arcade trace, profiler, hardware access map and sound probe; Mega Drive VDP trace and game-state probe; hit detection capture for both machines |
+| `tools/analysis/` | Static code and hardware map, trace summaries, profile report, VDP dump renderer, 68000 disassembler, hit detection model |
 | `tools/check_md.sh` | One-command headless check of a Mega Drive ROM (`TRACE_INPUT=start` plays the demo) |
 | `tools/run_md.sh` | Runs a ROM in MAME through a one-entry software list |
 | `analysis/` (ignored) | `roms/`, `work/` images, `ghidra/` projects, `out/` exports, `mame/` runs, `venv/` |
 
-`tools/README.md` has the commands. Skills in `.claude/skills/` cover the three recurring jobs: `trace-arcade`, `disassemble-68k`, `check-md-rom`. There is no build yet: `src/` and `build_md.py` arrive with milestone 1.
+`tools/README.md` has the commands. Skills in `.claude/skills/` cover the three recurring jobs: `trace-arcade`, `disassemble-68k`, `check-md-rom`. 
 
 ## Environment
 
@@ -64,6 +67,18 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 - A whole arcade frame is at most about 800 patterns in stage 1: it fits in VRAM twice. Sprites per line and palettes are what do not fit.
 - RoboCop MD (the demo) is a from-scratch SGDK program with no arcade code. It is the reference for picture mode, layer mapping, palettes and sprite budget, not for code. Its recipe: H32, street on plane A, skyline on plane B, both low priority with one palette line each, all sprites high priority, HUD drawn with sprites, no window, no raster effects.
 - Name built ROMs `.md`: emulators pick the system from the extension.
+
+**The build**
+
+- Build with `analysis/venv/bin/python3 -I build_md.py robocop.zip test/roms/md/robocop_md.md`. The output contains Data East's program: never commit it.
+- Hardware addresses are rewritten in place to RAM: palette `0xFF0000` and `0xFF4000` (the halves must stay `0x4000` apart: the game adds `0x4000` to one pointer), chip registers and I/O `0xFF0800–0xFF087F`, dual-port RAM `0xFF1000`, text scroll tables and plain RAM `0xFF2000`, layer 2 and 3 maps `0xFF4800` and `0xFF5000`, layer 2 scroll tables `0xFF5800`, text map `0xFF6000`, layer 3 scroll tables `0xFFC800`. Hardware layer variables from `0xFFD000`. See the table in `tools/build/build.py`.
+- **Hardware addresses also sit in data**: pointers after a routine's `rts`, tables of pointers, and the text printer's lists (`pointer, characters..., 0xFFFE, pointer, ..., 0xFFFF`). `build.py` relocates those it can recognise. `0x0018xxxx` and `0x0024xxxx` also arise by chance from a displacement or a small number followed by another word, so values in the dual-port and register ranges are never treated as data.
+- **Check for missed addresses dynamically**: `tools/mame/md_state.lua` writes `stray_access.csv`, every access the build makes to an arcade hardware address. It must stay empty; run it whenever play reaches somewhere new.
+- A patch that replaces an instruction holding a hardware address must still leave that address to the relocation pass, or relocate it itself. The first build hung on exactly that.
+- The arcade's reset code and three HuC6280 routines lie under the Mega Drive header (`0x100–0x1FF`). The game jumps back to `0x1BC` to restart; those jumps go through a trampoline at `0x200`.
+- The stand-in for the VBlank flag (bit 7 of `0xFF0863`) must read 0, or the arcade's VBlank handler never returns. DIP switches read `0xFF7F`.
+- **The build cannot be compared with the arcade step for step.** The game's random numbers come from a counter the frame wait loop spins (`0xFF8008`), so they depend on timing. Compare statistics, or one routine at a time on captured inputs, as `hit_capture.lua` and `hit_model.py` do for the hit detection.
+- Take hardware-layer addresses from the linker's symbol table.
 
 **Tooling**
 

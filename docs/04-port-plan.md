@@ -2,7 +2,7 @@
 
 How *RoboCop* gets from the arcade board to a Mega Drive cartridge, in milestones. It builds on the measurements in [doc 01](01-architecture-dec0-vs-mega-drive.md), [doc 02](02-robocop-arcade-vs-md-demo.md) and [doc 03](03-robocop-measured.md).
 
-**Status: nothing is built yet.** This is the plan the measurements point to. Each milestone lists what has to be true before it counts as done.
+**Status: milestone 1 is done in an emulator.** The arcade program boots and plays on the Mega Drive in MAME with no picture yet. Each milestone lists what has to be true before it counts as done.
 
 ## Decisions
 
@@ -19,7 +19,7 @@ How *RoboCop* gets from the arcade board to a Mega Drive cartridge, in milestone
 | Reference for video | The RoboCop MD demo's layout (doc 02) | Layer 2 on plane A, layer 3 on plane B, one palette line each |
 | Emulator for checks | MAME `genesis`, headless | Scriptable; BlastEm or ares for hands-on play |
 
-## How the build will work
+## How the build works
 
 ```mermaid
 flowchart LR
@@ -32,44 +32,74 @@ flowchart LR
     BUILD --> OUT["Mega Drive ROM<br/>out/robocop_md.md"]
 ```
 
-`build_md.py` will take the user's `robocop.zip`, check each file by size and CRC32, and:
+`build_md.py` takes the user's `robocop.zip`, checks the four program ROMs by size and CRC32, joins them, and `tools/build/build.py` then:
 
-1. **Redirect every hardware address** to its copy in RAM by rewriting the 32-bit constant in place (same instruction, same size). The list comes from the static scan (`tools/analysis/codemap.py`) checked against the access map of what really executed; a value that is not the operand of a decoded instruction is left alone and reported.
-2. **Replace the first 512 bytes**: vector table and Mega Drive header. Reset goes to the hardware layer; VBlank (level 6) goes to the hardware layer, which then calls Data East's handler.
-3. **Replace the routines that talk to the HuC6280** (`0x100–0x22B` start-up handshake and upload, `0x35A6` sync, `0x3EEE` routine sequencer, `0x75AE` / `0x7638` object exchange) with calls into the hardware layer.
-4. **Remove the two hardware waits**: the VBlank-flag loop at `0x1156` and the interrupt acknowledge.
-5. **Append** the hardware layer and the converted graphics after the program at `0x040000`.
+1. **Redirects every hardware address** to its copy in RAM by rewriting the 32-bit constant in place (same instruction, same size): 273 instruction operands, found by scanning for values in the hardware ranges and keeping those that are the operand of a valid instruction.
+2. **Redirects pointers held in data**: 228 long values in the tilemap, palette and `0x242800` ranges that follow a routine's `rts`, sit in a run of such pointers, or follow a list terminator (the text printer's lists are `pointer, characters..., 0xFFFE, pointer, ...`). Values in the dual-port RAM's and the registers' ranges are never treated as data pointers: `0x0018` and `0x0024` followed by a small number are common in word tables.
+3. **Replaces the vector table and the header page.** Reset and VBlank (level 6) go to the hardware layer, which calls Data East's handler after reading the pad.
+4. **Replaces the exchanges with the HuC6280** (below).
+5. **Appends** the hardware layer after the program at `0x040000`.
+
+About 210 values in hardware ranges are left alone as coincidences. The check for a missed one is dynamic: `tools/mame/md_state.lua` records every access the running build makes to an arcade hardware address, which on the Mega Drive is cartridge space. In 9,000 frames of play through stage 1 and into stage 2 there were none.
+
+### The HuC6280's jobs
+
+| Arcade | Mega Drive build |
+|---|---|
+| Start-up handshake and program upload (`0x100–0x22B`) | Gone with the header page; `hal_boot` does the cold start's other steps in the same order |
+| Main loop sync (`0x35A6`: write `0x80`, wait for `0x81`) | The write stores `0x81` |
+| Routine sequencer (`0x3EEE`) | `hal_sequence`: reads the 18 routine numbers from the HuC6280 program's own table in the 68000 ROM (`0xD7BF`) and calls each through the game's table at `0x3F38` |
+| Interrupt at `0x7630` (`clr.w $180ffe`) | `jsr hal_hit`: a 68000 transcription of the HuC6280's interrupt routine, working on the same bytes in the dual-port RAM's stand-in and reading the box tables from the 68000 ROM |
+| The two jumps to the restart code at `0x1BC`, inside the header page | Re-aimed at a trampoline at `0x200` |
+
+The game's own copies of the object records into the dual-port RAM and back are kept for now. They cost about 54,000 cycles per step on the arcade; removing them is an optimisation for later.
+
+**How the hit detection was checked.** `tools/mame/hit_capture.lua` records the dual-port RAM before and after each exchange, on the arcade and on the build. `tools/analysis/hit_model.py` holds a model of the HuC6280 routine and compares:
+
+| Capture | Steps | With objects | With a record marked | With energy taken | Differ from the model |
+|---|---|---|---|---|---|
+| Arcade (real HuC6280 program in MAME) | 1,619 | 568 | 31 | 28 | 0 |
+| Mega Drive build | 1,606 | 518 | 29 | 26 | 0 |
+
+So the model equals the HuC6280 on everything the arcade run produced, and the 68000 routine equals the model on everything the build's run produced. The two runs are not the same game (see milestone 1), and neither reached object types that only appear later.
 
 ### Memory
 
-| Arcade | Mega Drive build (proposed) |
+| Arcade | Mega Drive build |
 |---|---|
 | Program `0x000000–0x03FFFF` | Same addresses |
 | Work RAM `0xFF8000–0xFFBFFF` | Same addresses |
-| Sprite RAM `0xFFC000–0xFFC7FF` | Same addresses; read by the hardware layer at the latch |
-| Text chip `0x240000–0x245FFF`: registers, scroll tables at +`0x2000`, plain RAM at +`0x2800`, tilemap at +`0x4000` | `0xFF0000–0xFF5FFF`, same offsets |
-| Inputs and control `0x30C000–0x30C01F` | `0xFF0800–0xFF081F`, in the gap after the text chip's registers |
-| Dual-port RAM `0x180000–0x180FFF` | `0xFF1000–0xFF1FFF`, same layout (one byte per word) so indexed accesses still work |
-| Layer 2 registers and scroll tables `0x246000–0x2487FF` | `0xFF6000–0xFF67FF`, packed |
-| Layer 3 registers and scroll tables `0x24C000–0x24CFFF` | `0xFF6800–0xFF6FFF`, packed |
-| Layer 2 tilemap `0x24A000–0x24A7FF` | `0xFF7000–0xFF77FF` |
-| Layer 3 tilemap `0x24D000–0x24D7FF` | `0xFF7800–0xFF7FFF` |
-| Palette `0x310000`, `0x314000` | `0xFFC800–0xFFCFFF`, `0xFFD000–0xFFD7FF` |
-| Hardware layer's variables, tables and stack | `0xFFD800–0xFFFFFF` (10 KB) and the gaps at `0xFF0020–0xFF07FF` and `0xFF0820–0xFF0FFF` |
+| Sprite RAM `0xFFC000–0xFFC7FF` | Same addresses |
+| Palette, red and green `0x310000–0x3107FF` | `0xFF0000–0xFF07FF` |
+| Palette, blue `0x314000–0x3147FF` | `0xFF4000–0xFF47FF` |
+| Text layer registers `0x240000–0x24001F` | `0xFF0800` |
+| Layer 2 registers `0x246000–0x24601F` | `0xFF0820` |
+| Layer 3 registers `0x24C000–0x24C01F` | `0xFF0840` |
+| Inputs and control `0x30C000–0x30C01F` | `0xFF0860` |
+| Dual-port RAM `0x180000–0x180FFF` | `0xFF1000–0xFF1FFF`, same layout (one byte per word) |
+| Text layer scroll tables and plain RAM `0x242000–0x243FFF` | `0xFF2000–0xFF3FFF` |
+| Layer 2 tilemap `0x24A000–0x24A7FF` | `0xFF4800–0xFF4FFF` |
+| Layer 3 tilemap `0x24D000–0x24D7FF` | `0xFF5000–0xFF57FF` |
+| Layer 2 scroll tables `0x248000–0x2487FF` | `0xFF5800–0xFF5FFF` |
+| Text tilemap `0x244000–0x245FFF` | `0xFF6000–0xFF7FFF` |
+| Layer 3 scroll tables `0x24C800–0x24CFFF`, and `0x24E000–0x24E7FF` where the game's VBlank handler writes them | `0xFFC800–0xFFCFFF` |
+| Hardware layer's variables | From `0xFFD000`; `0xFF0880–0xFF0FFF` and `0xFFD000–0xFFFFFF` are free |
 
-The text chip keeps its arcade offsets so that one constant relocates everything in `0x240000–0x245FFF`. The exact map is settled in milestone 1; the point is that everything fits, with about 13 KB left for the hardware layer. On real hardware the Mega Drive mirrors work RAM through `0xE00000–0xFFFFFF`, which does not matter here because no arcade address is in that range.
+The two palette halves have to stay `0x4000` apart: the game keeps one pointer and adds `0x4000` to reach the blue half (`0x132C`). On real hardware the Mega Drive mirrors work RAM through `0xE00000–0xFFFFFF`, which does not matter here because no arcade address is in that range.
 
 ## Milestones
 
-### 1. The arcade program runs on the Mega Drive
+### 1. The arcade program runs on the Mega Drive — done (emulator)
 
-The game boots, runs its attract mode and a credit starts a game, with no picture beyond a debug view.
+`src/hal.s` (942 bytes) boots the console, reads pad 1 into the arcade's input words (B attack, C jump, A coin, Start start; DIP switches at MAME's defaults), and stands in for the HuC6280. Checked in MAME's `genesis` driver with `tools/mame/md_state.lua`, which reads the game's own variables:
 
-- Vector table, header, console boot (TMSS, VDP, Z80 held), pads read into the arcade's input words, DIP switch defaults.
-- Address redirection for every hardware range.
-- The HuC6280's sequencer: the list of 18 routine numbers, handed out in order.
-- The HuC6280's hit detection, first as a faithful transcription of its code operating on the records in the redirected dual-port RAM layout (the arcade's copies kept), so behaviour can be compared before anything is optimised.
-- **Done when** the game's own state (step counter, player position and energy, object list), read from RAM in MAME, tracks the arcade's under the same inputs for the length of stage 1's first screen, and a hit by an enemy bullet takes energy off on both.
+- The game runs its attract mode, takes a coin and a start, and plays: under the blind play script the player's position and the scroll advance through stage 1 and into stage 2, the step counter advances once per two frames, enemy hits take energy off, and a death restarts play.
+- No access to an unredirected hardware address in 9,000 frames.
+- The hit detection equals the HuC6280's (table above).
+
+Not done, and not possible as first planned: tracking the arcade's state step for step under the same inputs. The game's random numbers come from a counter that the frame wait loop spins (`0xFF8008`), so they depend on how long each step took, and the two machines diverge within seconds. Comparisons between arcade and build are therefore statistical, or made on one routine at a time as for the hit detection.
+
+There is no picture: the display is on and blank.
 
 ### 2. Sprites
 

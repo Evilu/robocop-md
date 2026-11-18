@@ -1,2 +1,1 @@
-numpy>=1.24
 capstone>=5.0
