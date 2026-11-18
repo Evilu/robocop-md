@@ -1,0 +1,29 @@
+# ROMs and dumps are never committed
+*.zip
+*.7z
+*.bin
+*.gen
+*.smd
+*.rom
+*.ram
+*.srm
+roms/
+# build output
+/build/
+/out/
+*.o
+*.elf
+*.lst
+*.map
+# local
+.DS_Store
+.idea/
+.claude/*
+!.claude/skills/
+
+# local analysis output (extracted ROMs, disassembly, traces)
+/analysis/
+
+# built ROMs contain the user-supplied game program
+/test/roms/
+.venv/
