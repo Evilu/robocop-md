@@ -226,7 +226,8 @@ def build(program, sprites, tiles1, tiles2, chars, sound_program, samples, out_p
         sys.exit('hardware layer does not fit')
     layer2, layer3 = gfx.plane_tiles(tiles1, 2048), gfx.plane_tiles(tiles2, 1024)
     text = gfx.characters(chars)
-    blank = bytes(not any(layer2[t * 128:(t + 1) * 128]) for t in range(2048)) + bytes(1024)
+    blank = bytes(not any(layer2[t * 128:(t + 1) * 128]) for t in range(2048))
+    blank += bytes(not any(layer3[t * 128:(t + 1) * 128]) for t in range(1024))
     blank += bytes(not any(text[c * 32:(c + 1) * 32]) for c in range(4096))
     rom += b'\xff' * (GFX_BLANK - len(rom)) + blank
     singles, pairs = gfx.sprite_sets(sprites, SPRITE_TILES)

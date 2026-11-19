@@ -25,7 +25,8 @@
     .equ text_planes_left, 0xff1046
     .equ text_inexact,  0xff1048
     .equ text_curtain,  0xff104a
-    .equ TEXT_CELLS,    0xff1050    | 8 words: the block being written
+    .equ TEXT_CELLS,    0xff1050
+    .equ BLOCK_STALE,   0xff1060    | a bit per block: draw it again whatever its checksum says    | 8 words: the block being written
     .equ CHAR_KEYS,     0xff1100    | 160 words: the character and palette in each pattern, 0xffff = free
     .equ CHAR_SLOTS,    160
     .equ CHAR_LIMIT,    150
@@ -52,10 +53,12 @@ text_invalidate:
     clr.l   (a0)+
     clr.l   (a0)+
     clr.l   (a0)+
-    lea     BLOCK_SUM, a0
-    moveq   #TEXT_BLOCKS - 1, d0
-1:  not.w   (a0)+
-    dbra    d0, 1b
+    lea     BLOCK_STALE, a0
+    moveq   #-1, d0
+    move.l  d0, (a0)+
+    move.l  d0, (a0)+
+    move.l  d0, (a0)+
+    move.l  d0, (a0)+
     rts
 
 | After a palette change: do the text's colour tables still give each pen its own colour?
@@ -63,6 +66,9 @@ text_validate:
     moveq   #0, d7
     moveq   #0, d6
     lea     BG_FULL, a3
+    cmpi.w  #0xe000, text_plane
+    bne.s   1f
+    lea     BG_FULL + 64, a3
 1:  lea     TEXT_LUT_OK, a2
     tst.b   (a2, d6.w)
     beq.s   4f
@@ -217,10 +223,9 @@ text_update:
 1:  move.w  d0, -(sp)
     bsr.w   text_leave
     move.w  (sp)+, text_plane
-    lea     BLOCK_SUM, a0
-    moveq   #TEXT_BLOCKS - 1, d0
-3:  not.w   (a0)+
-    dbra    d0, 3b
+    clr.w   text_flush
+    bsr.w   text_invalidate
+    clr.w   text_flush
 2:  move.w  #TEXT_PLANE_BLOCKS, text_planes_left
     move.w  #TEXT_PER_LATCH, text_budget
     move.w  hal_tick, d7
@@ -256,8 +261,13 @@ text_update:
     move.w  d7, d1
     add.w   d1, d1
     cmp.w   (a1, d1.w), d0
+    bne.s   6f
+    lea     BLOCK_STALE, a1
+    move.w  d7, d1
+    lsr.w   #3, d1
+    btst    d7, (a1, d1.w)
     beq.s   3f
-    movem.w d6-d7, -(sp)
+6:  movem.w d6-d7, -(sp)
     move.w  d0, text_sum
     move.w  d7, text_block_no
     tst.w   text_plane
@@ -337,8 +347,13 @@ text_block:
 text_block_done:
     lea     BLOCK_SUM, a1
     move.w  text_block_no, d1
+    move.w  d1, d0
     add.w   d1, d1
     move.w  text_sum, (a1, d1.w)
+    lea     BLOCK_STALE, a1
+    move.w  d0, d1
+    lsr.w   #3, d1
+    bclr    d0, (a1, d1.w)
     rts
 
 | a0 = the block's first character in the map. Writes the block's eight cells into the text's plane.
@@ -429,7 +444,10 @@ text_char:
 6:  bsr.w   text_char_pattern
     move.w  d1, d0
     ori.w   #0xc000, d0
-    rts
+    cmpi.w  #0xe000, text_plane
+    bne.s   7f
+    ori.w   #0x2000, d0
+7:  rts
 
 | d3 = twice the character's place in CHAR_KEYS. Returns its pattern number in d1.
 text_char_pattern:
