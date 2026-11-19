@@ -63,10 +63,10 @@ sub = emu.add_machine_frame_notifier(function()
   if frame % every == 0 then
     local n = 0
     for _ in pairs(stray) do n = n + 1 end
-    print(string.format("frame %5d pc %06x sr %04x  hal frames %d  steps %04x  flags %02x  credits/mode %02x  energy %02x  player x %04x y %04x  objects %d  scroll %04x  stray %d",
+    print(string.format("frame %5d pc %06x sr %04x  hal frames %d  steps %04x  flags %02x  credits/mode %02x  energy %02x  player x %04x y %04x  objects %d  scroll %04x  stray %d  sprites dropped %d",
       frame, cpu.state["PC"].value & 0xffffff, cpu.state["SR"].value, prog:read_u32(0xffd000), prog:read_u16(0xff800a),
       prog:read_u8(0xff8000), prog:read_u8(0xffb235), prog:read_u8(0xffb242), prog:read_u16(0xffb238), prog:read_u16(0xffb23c),
-      prog:read_u8(0xff983b), prog:read_u16(0xff8f7c), n))
+      prog:read_u8(0xff983b), prog:read_u16(0xff8f7c), n, prog:read_u16(0xffd026)))
   end
   if snap_every > 0 and frame % snap_every == 0 then manager.machine.video:snapshot() end
   if frame >= max_frames then

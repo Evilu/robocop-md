@@ -22,6 +22,7 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 |---|---|
 | `docs/` | Research documents and the port plan |
 | `src/hal.s` | The Mega Drive hardware layer: boot, VBlank, pad, and the HuC6280's two jobs (GNU as, Motorola operand syntax, `\|` comments) |
+| `src/sprites.s` | Sprite RAM to Mega Drive sprites: pieces, VRAM pattern cache, palette lines, the flush at VBlank |
 | `build_md.py` | Builds the Mega Drive ROM from the user's `robocop.zip` (calls `tools/build/build.py`) |
 | `test/roms/md/` (ignored) | Built ROMs for the user to try |
 | `tools/prep_roms.py` | Builds flat program and graphics images, and a MAME-ready ROM folder, from the user's sets |
@@ -79,6 +80,11 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 - The stand-in for the VBlank flag (bit 7 of `0xFF0863`) must read 0, or the arcade's VBlank handler never returns. DIP switches read `0xFF7F`.
 - **The build cannot be compared with the arcade step for step.** The game's random numbers come from a counter the frame wait loop spins (`0xFF8008`), so they depend on timing. Compare statistics, or one routine at a time on captured inputs, as `hit_capture.lua` and `hit_model.py` do for the hit detection.
 - Take hardware-layer addresses from the linker's symbol table.
+- **VRAM layout (H32):** patterns `0x000–0x1FF` free for the planes, sprite cache `0x200–0x5BF` (120 slots of 8), sprite table `0xB800`, hscroll `0xBC00`, plane A `0xC000`, plane B `0xE000`.
+- **Sprite tiles are stored twice in the ROM**: singly at `0x080000` (128 bytes each) and as vertical pairs at `0x100000` (256 bytes per pair), because a 16×32 Mega Drive sprite needs its eight patterns in one run, column by column. Cache keys are the tile code for singles and 3072 + pair number for pairs.
+- **The sprite table is built at the latch and sent at the next VBlank**, one frame later, with the patterns it needs. Anything else drawn from the same game step should be sent at that VBlank too.
+- Sprite table entry 0 is an off-screen dummy heading the chain; real pieces are linked last to first because the arcade's last entry is on top.
+- The arcade program never touches memory outside its own RAM and hardware (checked with read and write taps over 7,200 frames), so `0xFF0000–0xFF7FFF` and `0xFFC800–0xFFFFFF` are the hardware layer's.
 
 **Tooling**
 
