@@ -24,7 +24,9 @@ for f, b in string.gmatch(os.getenv("PRESS") or "", "(%d+):(%a+)") do presses[#p
 local stray = {}
 local function note(write)
   return function(offset)
-    local key = (curpc.value & 0xffffff) * 0x1000000 + offset
+    local pc = curpc.value & 0xffffff
+    if pc >= 0x040000 then return end
+    local key = pc * 0x1000000 + offset
     local e = stray[key]
     if not e then e = { 0, 0 } stray[key] = e end
     e[write and 2 or 1] = e[write and 2 or 1] + 1
@@ -67,6 +69,10 @@ sub = emu.add_machine_frame_notifier(function()
       frame, cpu.state["PC"].value & 0xffffff, cpu.state["SR"].value, prog:read_u32(0xffd000), prog:read_u16(0xff800a),
       prog:read_u8(0xff8000), prog:read_u8(0xffb235), prog:read_u8(0xffb242), prog:read_u16(0xffb238), prog:read_u16(0xffb23c),
       prog:read_u8(0xff983b), prog:read_u16(0xff8f7c), n, prog:read_u16(0xffd026)))
+    local slots = 0
+    for i = 0, 206 do if prog:read_u16(0xff0a20 + i * 2) ~= 0 then slots = slots + 1 end end
+    print(string.format("            tiles: slots in use %d of 207, cache full %d, resets %d, colours on lines 2 and 3: %d and %d, pens given a nearest colour %d",
+      slots, prog:read_u16(0xff0e10), prog:read_u16(0xff0e12), prog:read_u16(0xff0e1c), prog:read_u16(0xff0e1e), prog:read_u16(0xff0e0c)))
   end
   if snap_every > 0 and frame % snap_every == 0 then manager.machine.video:snapshot() end
   if frame >= max_frames then

@@ -49,7 +49,8 @@ def main():
                                      'obj_lines_over_320px', 'obj_pals', 'obj_flash', 'obj_colour8',
                                      'pf1_cells', 'pf1_unique', 'pf1_pals', 'pf2_unique', 'pf2_patterns', 'pf2_pals',
                                      'pf3_unique', 'pf3_patterns', 'pf3_pals', 'palettes', 'colours', 'colours_9bit',
-                                     'working_set_patterns', 'new_patterns_vs_prev'])
+                                     'working_set_patterns', 'new_patterns_vs_prev'] +
+              [k for k in ('obj_colours9', 'pf1_colours9', 'pf2_colours9', 'pf3_colours9', 'pf23_colours9') if k in g[0]])
         for th in (16, 20):
             print(f'frames with more than {th} sprite tiles on a line: '
                   f'{sum(1 for r in g if n(r, "obj_line_tiles_max") > th) / len(g) * 100:.2f}%')

@@ -31,6 +31,17 @@ def pattern(rows, x, y):
     return bytes(out)
 
 
+def plane_tiles(region, tiles):
+    """Each tile as four plane cells: top left, top right, bottom left, bottom right."""
+    out = bytearray()
+    for code in range(tiles):
+        rows = tile_pixels(region, code)
+        for y in (0, 8):
+            for x in (0, 8):
+                out += pattern(rows, x, y)
+    return bytes(out)
+
+
 def sprite_sets(region, tiles):
     """Singles: each tile as a 2x2-cell sprite. Pairs: tiles 2k and 2k+1 stacked as a 2x4-cell sprite.
     Sprite patterns run down each column, then across."""

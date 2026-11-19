@@ -18,6 +18,8 @@ PROGRAM = [(('ep05-4.11c', 0x29c35379), ('ep01-4.11b', 0x77507c69)),
            (('ep04-3', 0x39181778), ('ep00-3', 0xe128541f))]
 SPRITES = [('ep07', 0x495d75cf), ('ep06', 0xa2ae32e2), ('ep11', 0x62fa425a), ('ep10', 0xcce3bd95),
            ('ep09', 0x11bed656), ('ep08', 0xc45c7b4c), ('ep13', 0x8fca9f28), ('ep12', 0x3cd1d0c3)]
+TILES1 = [('ep20', 0x1d8d38b8), ('ep21', 0x187929b2), ('ep18', 0xb6580b5e), ('ep19', 0x9bad01c7)]
+TILES2 = [('ep14', 0xca56ceda), ('ep15', 0xa945269c), ('ep16', 0xe7fa4d58), ('ep17', 0x84aae89d)]
 SIZE = 0x10000
 
 
@@ -38,7 +40,7 @@ def reader(source):
 
 def load(read):
     data, problems = {}, []
-    for name, crc in [f for pair in PROGRAM for f in pair] + SPRITES:
+    for name, crc in [f for pair in PROGRAM for f in pair] + SPRITES + TILES1 + TILES2:
         blob = read(name)
         if blob is None:
             problems.append(f'  {name}: missing')
@@ -76,7 +78,9 @@ def main(argv):
     sprites = bytearray(len(SPRITES) * SIZE)
     for i, (name, _) in enumerate(SPRITES):
         sprites[i * SIZE:i * SIZE + len(data[name])] = data[name]
-    build.build(program, bytes(sprites), out)
+    tiles1 = b''.join(data[name] for name, _ in TILES1)
+    tiles2 = b''.join(data[name] for name, _ in TILES2)
+    build.build(program, bytes(sprites), tiles1, tiles2, out)
     print(f'\nDone: {out}')
 
 

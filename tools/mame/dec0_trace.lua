@@ -106,6 +106,7 @@ local prev_visible = {}
 local function frame_stats()
   local visible = {}
   local colours, colours9, pal_used = {}, {}, {}
+  local layer9 = { [0] = {}, [256] = {}, [512] = {}, [768] = {} }
   local function use_pal(base, pal)
     local k = base + pal * 16
     if pal_used[k] then return end
@@ -113,8 +114,15 @@ local function frame_stats()
     for pen = 1, 15 do
       local rg, b = pal_rg:read_u16((k + pen) * 2), pal_b:read_u16((k + pen) * 2) & 0xff
       colours[rg * 256 + b] = true
-      colours9[((rg & 0xe0) << 1) | ((rg >> 13) << 3) | (b >> 5)] = true
+      local c9 = ((rg & 0xe0) << 1) | ((rg >> 13) << 3) | (b >> 5)
+      colours9[c9] = true
+      layer9[base][c9] = true
     end
+  end
+  local function count(t)
+    local c = 0
+    for _ in pairs(t) do c = c + 1 end
+    return c
   end
 
   local entries, tiles, md_sprites, ncodes, flash, behind = 0, 0, 0, 0, 0, 0
@@ -229,8 +237,12 @@ local function frame_stats()
     local r = lay[L]
     s = s .. string.format(",%x,%d,%d,%d,%d,%d,%d,%d", r.ctrl, r.shape, r.sx, r.sy, r.cells, r.uniq, r.pat, r.pals)
   end
-  return s .. string.format(",%d,%d,%d,%d,%d,%x,%d,%d,%d,%d,%d,%x", npal, ncol, ncol9, ws, delta, pri,
-    snd_cmds, sub_irqs, dma, idle_reads, hash, cpu.state["PC"].value)
+  local both = {}
+  for c in pairs(layer9[512]) do both[c] = true end
+  for c in pairs(layer9[768]) do both[c] = true end
+  return s .. string.format(",%d,%d,%d,%d,%d,%x,%d,%d,%d,%d,%d,%x,%d,%d,%d,%d,%d", npal, ncol, ncol9, ws, delta, pri,
+    snd_cmds, sub_irqs, dma, idle_reads, hash, cpu.state["PC"].value,
+    count(layer9[256]), count(layer9[0]), count(layer9[512]), count(layer9[768]), count(both))
 end
 
 local function field(name)
@@ -252,7 +264,7 @@ for L = 1, 3 do
   local p = "pf" .. L
   csv:write(",", p, "_ctrl,", p, "_shape,", p, "_sx,", p, "_sy,", p, "_cells,", p, "_unique,", p, "_patterns,", p, "_pals")
 end
-csv:write(",palettes,colours,colours_9bit,working_set_patterns,new_patterns_vs_prev,priority,sound_cmds,sub_irqs,sprite_dma,idle_reads,obj_hash,pc\n")
+csv:write(",palettes,colours,colours_9bit,working_set_patterns,new_patterns_vs_prev,priority,sound_cmds,sub_irqs,sprite_dma,idle_reads,obj_hash,pc,obj_colours9,pf1_colours9,pf2_colours9,pf3_colours9,pf23_colours9\n")
 
 local frame = 0
 local errs = 0

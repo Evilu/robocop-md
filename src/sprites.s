@@ -10,7 +10,7 @@
     .equ UPLOADS,       0xffd300    | 8 bytes each: ROM address, length in words, VRAM address
     .equ SLOT_KEY,      0xffd500    | word per slot: key held, 0xffff = empty
     .equ SLOT_STAMP,    0xffd600    | word per slot: last latch that used it
-    .equ CRAM_BUFFER,   0xffd700    | 48 words: palette lines 0-2
+    .equ CRAM_BUFFER,   0xffd700    | 32 words: palette lines 0-1
     .equ SLOT_OF,       0xffe000    | byte per key: slot + 1, 0 = not in VRAM
 
     .equ spr_stamp,     HAL_VARS + 0x10
@@ -29,10 +29,10 @@
     .equ LINE_PAL,      HAL_VARS + 0x2e    | 3 bytes: arcade palette on each line, 0xff = none
     .equ PAL_LINE,      HAL_VARS + 0x32    | 16 bytes: line of each arcade palette, 0xff = none
 
-    .equ SLOTS,         120
+    .equ SLOTS,         80
     .equ MAX_UPLOADS,   64
     .equ MAX_SPRITES,   64
-    .equ SPRITE_PATTERNS, 0x200
+    .equ SPRITE_PATTERNS, 0x340
     .equ VRAM_SAT,      0xb800
     .equ PAIR_KEYS,     SPRITE_TILES
     .equ TOP_LINE,      16
@@ -184,6 +184,7 @@ spr_end:
     clr.l   (a2)
     bsr.w   palettes_convert
     move.w  #1, spr_ready
+    bsr.w   bg_update
     movem.l (sp)+, d0-d7/a0-a6
     rts
 
@@ -284,7 +285,7 @@ slot_use:
     move.w  d6, d2
     rts
 
-| d2 = arcade sprite palette (0-15). Returns its palette line (0-2) in d2.
+| d2 = arcade sprite palette (0-15). Returns its palette line (0-1) in d2.
 palette_line:
     lea     PAL_LINE, a3
     moveq   #0, d6
@@ -292,9 +293,6 @@ palette_line:
     bpl.s   3f
     lea     LINE_STAMP, a4
     move.w  spr_stamp, d6
-    cmp.w   (a4), d6
-    bne.s   1f
-    addq.l  #2, a4
     cmp.w   (a4), d6
     bne.s   1f
     addq.l  #2, a4
@@ -322,11 +320,11 @@ palette_line:
     rts
 
 | Arcade palette entries (8 bits per channel, red and green in one word, blue in
-| another) to the console's 3 bits per channel, for the palettes on lines 0-2.
+| another) to the console's 3 bits per channel, for the palettes on lines 0-1.
 palettes_convert:
     lea     CRAM_BUFFER, a2
     lea     LINE_PAL, a3
-    moveq   #2, d7
+    moveq   #1, d7
 1:  moveq   #0, d0
     move.b  (a3)+, d0
     bmi.s   4f
@@ -375,7 +373,7 @@ sprites_flush:
     bsr.w   dma_to_vram
     move.l  #0xc0000000, VDP_CTRL
     lea     CRAM_BUFFER, a0
-    moveq   #47, d0
+    moveq   #31, d0
 3:  move.w  (a0)+, VDP_DATA
     dbra    d0, 3b
 4:  rts
