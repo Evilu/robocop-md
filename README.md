@@ -42,7 +42,7 @@ Pad: **A** inserts a coin, **Start** starts, **B** attacks, **C** jumps. Run in 
 
 ## Known issues
 
-Everything here was seen in MAME or ares in the attract sequence, stage 1 and the first screens of stage 2. Nothing else has been played.
+Everything here was seen in MAME or ares in the attract sequence, stage 1 and the first screens of stage 2. The other stages have been loaded and looked at once; their faults (wrong sprite colours first among them, a half-speed bonus stage, a broken ending) are listed in [docs/06](docs/06-levels-arcade-vs-md.md).
 
 **Sound**
 - First version, converted mechanically from the arcade's three sound chips: the notes are right, but instruments and balance have not been tuned by ear.
@@ -79,6 +79,8 @@ Changes go through branches and pull requests: one branch per change, a pull req
 - [RoboCop: arcade vs the RoboCop MD demo](docs/02-robocop-arcade-vs-md-demo.md)
 - [RoboCop, measured](docs/03-robocop-measured.md)
 - [Port plan](docs/04-port-plan.md)
+- [Save states for every level](docs/05-save-states.md)
+- [Every level: arcade vs the Mega Drive build](docs/06-levels-arcade-vs-md.md)
 - [Analysis tools](tools/README.md)
 
 ## Rights

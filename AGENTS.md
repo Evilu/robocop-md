@@ -2,7 +2,7 @@
 
 A port of Data East's arcade game *RoboCop* (1988, MAME set `robocop`, World revision 4, MEC-M1 board, `dec0` in MAME) to the Sega Mega Drive. The plan is to run Data East's original 68000 program on the Mega Drive's 68000 and replace only the hardware layer, including the work of the board's second processor. Target: the whole game, as close to the arcade as the console allows.
 
-Read `docs/` in order before changing anything: 01 hardware comparison, 02 the arcade against the RoboCop MD demo, 03 the game measured, 04 the port plan and milestone status.
+Read `docs/` in order before changing anything: 01 hardware comparison, 02 the arcade against the RoboCop MD demo, 03 the game measured, 04 the port plan and milestone status, 05 save states for every level, 06 the faults found level by level.
 
 The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game. Its method, tool layout and conventions are the model here; its numbers are not.
 
@@ -10,7 +10,7 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 
 - **No game data in the repo.** No ROMs, no extracted graphics or sound, no disassembly or decompiler output, no screenshots of the games. `*.zip`, `*.bin`, `*.ram` and `/analysis/` are ignored; keep it that way. The user supplies their own ROMs.
 - **Measure, then write.** Every number in `docs/` was computed from a ROM, a trace or a cited source. Re-derive before repeating a figure, say what was not measured, and correct the docs when a measurement turns out wrong.
-- **Stage 1 only so far.** All traces cover attract mode, stage 1 and the first screens of stage 2 under scripted play. Do not generalise to later stages.
+- **Stage 1 is the only stage measured in depth.** The traces and profiles cover attract mode, stage 1 and the first screens of stage 2. Every other stage has been loaded from a save state and looked at (`docs/06`), opening screens only. Do not generalise stage 1's numbers to later stages.
 - **Extracted archives are untrusted.** Unpack into their own folder under `analysis/roms/`, keep scripts in `tools/`, run Python that reads them with `-I`.
 - **Check in MAME while working, and in ares before calling anything finished.** MAME headless (`-video none`, `tools/check_md.sh`) is for every iteration and opens nothing on the user's screen. When you think a change is done, also run `tools/check_ares.sh`: it opens ares, captures only its window, closes the ares it started and writes a contact sheet. Look at the sheet. ares is stricter than MAME and has shown bugs MAME hid; a picture that is right in MAME is not yet right. Never kill processes by name, and open no other windows unless the user asks.
 - Do not write tests or planning documents unless asked. Avoid comments; code should read clearly without them.
@@ -33,12 +33,14 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 | `tools/ghidra/` | Headless Ghidra import, seeding and C export |
 | `tools/mame/` | Lua scripts: arcade trace, profiler, hardware access map and sound probe; Mega Drive VDP trace and game-state probe; hit detection capture for both machines |
 | `tools/analysis/` | Static code and hardware map, trace summaries, profile report, VDP dump renderer, 68000 disassembler, hit detection model |
+| `tools/level.sh`, `level_states.sh`, `compare_levels.sh` | Start either machine in any scene, make a save state per scene, and compare the arcade with the port scene by scene (`tools/mame/level.lua`, `tools/analysis/level_sheet.py`) |
+| `tools/gpgx/run_core.c` | Headless runner for a libretro core (Genesis Plus GX): records the audio of a ROM run |
 | `tools/check_md.sh` | One-command headless check of a Mega Drive ROM (`TRACE_INPUT=start` plays the demo) |
 | `tools/run_md.sh` | Runs a ROM in MAME through a one-entry software list |
 | `tools/check_ares.sh` | Runs a ROM in ares, captures its window at intervals and makes a contact sheet: the last check before a change is called done |
 | `analysis/` (ignored) | `roms/`, `work/` images, `ghidra/` projects, `out/` exports, `mame/` runs, `venv/` |
 
-`tools/README.md` has the commands. Skills in `.claude/skills/` cover the three recurring jobs: `trace-arcade`, `disassemble-68k`, `check-md-rom`. 
+`tools/README.md` has the commands. Skills in `.claude/skills/` cover the recurring jobs: `trace-arcade`, `disassemble-68k`, `check-md-rom`, `level-states`. 
 
 ## Environment
 
@@ -53,6 +55,8 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 
 - 68000 at 10 MHz, 57.44 frames a second, 174,080 cycles a frame. Program `0x000000–0x03FFFF` (two ROM pairs, even and odd bytes interleaved), work RAM `0xFF8000–0xFFBFFF`, sprite RAM `0xFFC000–0xFFC7FF`, stack from `0xFFC000`.
 - **The game logic runs every second frame** (wait at `0x17E8`). Count CPU time and transfers per pair of frames: 348,160 arcade cycles against 256,023 on an NTSC Mega Drive.
+- **The level is two bytes.** `0xFFB21D` is the scene index (0-9), `0xFFB218` the stage number, `ROM[0x3EE2 + scene]` (`01 02 FF 04 03 FF 05 06 07 08`; `FF` is the bonus stage, and stage 4 is played before stage 3). Hold both while a game starts and that scene loads. Writing 7 to the game mode `0xFFB235` clears the stage; from scene 8 that plays the ending. All three work unchanged on the Mega Drive build.
+- With a coin in and no start press the game shows story pages before stage 1; scripted runs that press start at once never see them.
 - No global base register and no kernel. Variables and hardware are addressed absolutely; calls are `jsr d16(pc)` + `nop` or `jsr abs.l`; one main loop from `0x35B8`.
 - Reset `0x100`, cold start `0x122`. Every unused vector points at `0x100`. One interrupt: VBlank, level 6, at `0x1002`. The main program runs with the mask at 5.
 - **Wait loops are most of the CPU time**: the frame waits (`0x17BA`, `0x17E8`), a loop in the VBlank handler that waits for the VBlank flag to drop (`0x1156`), and the exchanges with the HuC6280. Real work in stage 1 is about 78,000 cycles per game step (99th percentile 181,000).
@@ -73,6 +77,7 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 - The console's RAM `0xFF0000–0xFF7FFF` and `0xFFC800–0xFFFFFF` (46 KB) is never addressed by the game. The arcade's memory-mapped tables total about 31 KB.
 - A whole arcade frame is at most about 800 patterns in stage 1: it fits in VRAM twice. Sprites per line and palettes are what do not fit.
 - RoboCop MD (the demo) is a from-scratch SGDK program with no arcade code. It is the reference for picture mode, layer mapping, palettes and sprite budget, not for code. Its recipe: H32, street on plane A, skyline on plane B, both low priority with one palette line each, all sprites high priority, HUD drawn with sprites, no window, no raster effects.
+- `BOOT_SCENE=n` in the environment of the build makes a test ROM that presses coin and start itself and starts in scene n (for ares, which takes no input). Without it the hardware layer is unchanged. MAME save states of the Mega Drive build go stale with every rebuild.
 - Name built ROMs `.md`: emulators pick the system from the extension.
 
 **The build**

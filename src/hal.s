@@ -25,6 +25,10 @@
     .equ RECORDS,       30
     .equ OBJECTS,       0xff983c
 
+    .equ SCENE,         0xffb21d    | index into the game's scene list
+    .equ STAGE,         0xffb218    | the stage number the game derives from it
+    .equ SCENE_STAGES,  0x003ee2
+
     .equ VDP_DATA,      0xc00000
     .equ VDP_CTRL,      0xc00004
     .equ PAD1_DATA,     0xa10003
@@ -314,6 +318,26 @@ read_pad:
     bne.s   2f
     bclr    #2, d2
 2:  move.b  d2, IO + 3
+    .if BOOT_SCENE < 255
+    move.l  hal_frames, d0
+    cmpi.l  #400, d0
+    bhi.s   6f
+    cmpi.w  #60, d0
+    blo.s   6f
+    cmpi.w  #66, d0
+    bhs.s   3f
+    bclr    #4, IO + 3
+3:  cmpi.w  #120, d0
+    blo.s   4f
+    cmpi.w  #126, d0
+    bhs.s   4f
+    bclr    #2, IO + 3
+4:  cmpi.w  #100, d0
+    blo.s   6f
+    move.b  #BOOT_SCENE, SCENE
+    move.b  SCENE_STAGES + BOOT_SCENE, STAGE
+6:
+    .endif
     rts
 
     .include "sprites.s"

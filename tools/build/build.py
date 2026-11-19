@@ -76,6 +76,7 @@ def assemble():
                         '--defsym', f'GFX_SINGLE={GFX_SINGLE}', '--defsym', f'GFX_PAIR={GFX_PAIR}',
                         '--defsym', f'SPRITE_TILES={SPRITE_TILES}',
                         '--defsym', f'GFX_TILES={GFX_TILES}', '--defsym', f'GFX_BLANK={GFX_BLANK}', '--defsym', f'GFX_CHARS={GFX_CHARS}', '--defsym', f'SOUND_TABLE={SOUND_TABLE}', '--defsym', f'SAMPLE_TABLE={SAMPLE_TABLE}',
+                        '--defsym', f"BOOT_SCENE={int(os.environ.get('BOOT_SCENE', '255'))}",
                         str(ROOT / 'src' / 'hal.s'), '-o', str(obj)], check=True)
         subprocess.run([PREFIX + 'ld', '-Ttext', hex(HAL_BASE), '-e', hex(HAL_BASE), '-o', str(elf), str(obj)],
                        check=True)
