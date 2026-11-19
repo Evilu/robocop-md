@@ -55,6 +55,10 @@ hal_boot:
     moveq   #63, d0
 3:  move.w  #0, VDP_DATA
     dbra    d0, 3b
+    move.l  #0x40000000, VDP_CTRL
+    move.w  #0x3fff, d0
+6:  move.l  #0, VDP_DATA
+    dbra    d0, 6b
     move.b  #0x40, PAD1_CTRL
     move.b  #0x40, PAD1_DATA
 
@@ -68,6 +72,7 @@ hal_boot:
     cmpa.l  #0xfffffc, a0
     bne.s   5b
     bsr.w   idle_inputs
+    bsr.w   sprites_init
 
     moveq   #0, d7
     move.b  #1, IO + 0x15
@@ -96,11 +101,12 @@ idle_inputs:
     rts
 
 hal_vblank:
-    movem.l d0-d2/a0, -(sp)
+    movem.l d0-d4/a0-a1, -(sp)
     move.w  VDP_CTRL, d0
+    bsr.w   sprites_flush
     addq.l  #1, hal_frames
     bsr.w   read_pad
-    movem.l (sp)+, d0-d2/a0
+    movem.l (sp)+, d0-d4/a0-a1
     jmp     0x1002
 
 | The HuC6280 hands the main loop 18 routine numbers per game step, in the
@@ -295,6 +301,8 @@ read_pad:
 2:  move.b  d2, IO + 3
     rts
 
+    .include "sprites.s"
+
 hal_crash:
     move.w  #0x2700, sr
     move.w  #0x8700, VDP_CTRL
@@ -303,7 +311,7 @@ hal_crash:
 1:  bra.s   1b
 
 vdp_init:
-    .word   0x8004, 0x8134, 0x8230, 0x8334, 0x8407, 0x857a, 0x8600, 0x8700
-    .word   0x8800, 0x8900, 0x8a00, 0x8b00, 0x8c00, 0x8d3c, 0x8e00, 0x8f02
+    .word   0x8004, 0x8134, 0x8230, 0x8334, 0x8407, 0x855c, 0x8600, 0x8700
+    .word   0x8800, 0x8900, 0x8a00, 0x8b00, 0x8c00, 0x8d2f, 0x8e00, 0x8f02
     .word   0x9001, 0x9100, 0x9200
 vdp_init_end:

@@ -16,6 +16,8 @@ sys.path.insert(0, str(ROOT / 'tools' / 'build'))
 
 PROGRAM = [(('ep05-4.11c', 0x29c35379), ('ep01-4.11b', 0x77507c69)),
            (('ep04-3', 0x39181778), ('ep00-3', 0xe128541f))]
+SPRITES = [('ep07', 0x495d75cf), ('ep06', 0xa2ae32e2), ('ep11', 0x62fa425a), ('ep10', 0xcce3bd95),
+           ('ep09', 0x11bed656), ('ep08', 0xc45c7b4c), ('ep13', 0x8fca9f28), ('ep12', 0x3cd1d0c3)]
 SIZE = 0x10000
 
 
@@ -30,20 +32,18 @@ def reader(source):
 
     def read(name):
         info = members.get(name)
-        if info is None or info.file_size != SIZE:
-            return None
-        return archive.read(info)
+        return archive.read(info) if info is not None and info.file_size <= SIZE else None
     return read
 
 
 def load(read):
     data, problems = {}, []
-    for name, crc in [f for pair in PROGRAM for f in pair]:
+    for name, crc in [f for pair in PROGRAM for f in pair] + SPRITES:
         blob = read(name)
         if blob is None:
             problems.append(f'  {name}: missing')
-        elif len(blob) != SIZE or zlib.crc32(blob) != crc:
-            problems.append(f'  {name}: wrong contents (expected {SIZE} bytes, CRC32 {crc:08x}; '
+        elif zlib.crc32(blob) != crc:
+            problems.append(f'  {name}: wrong contents (expected CRC32 {crc:08x}; '
                             f'found {len(blob)} bytes, CRC32 {zlib.crc32(blob):08x})')
         data[name] = blob
     if problems:
@@ -73,7 +73,10 @@ def main(argv):
         sys.exit(f'{source} not found')
     data = load(reader(source))
     program = b''.join(interleave(data[even[0]], data[odd[0]]) for even, odd in PROGRAM)
-    build.build(program, out)
+    sprites = bytearray(len(SPRITES) * SIZE)
+    for i, (name, _) in enumerate(SPRITES):
+        sprites[i * SIZE:i * SIZE + len(data[name])] = data[name]
+    build.build(program, bytes(sprites), out)
     print(f'\nDone: {out}')
 
 

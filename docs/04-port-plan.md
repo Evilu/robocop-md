@@ -2,7 +2,7 @@
 
 How *RoboCop* gets from the arcade board to a Mega Drive cartridge, in milestones. It builds on the measurements in [doc 01](01-architecture-dec0-vs-mega-drive.md), [doc 02](02-robocop-arcade-vs-md-demo.md) and [doc 03](03-robocop-measured.md).
 
-**Status: milestone 1 is done in an emulator.** The arcade program boots and plays on the Mega Drive in MAME with no picture yet. Each milestone lists what has to be true before it counts as done.
+**Status: milestones 1 and 2 are done in an emulator.** The arcade program boots and plays on the Mega Drive in MAME and its sprites are drawn; backgrounds, text and sound are not. Each milestone lists what has to be true before it counts as done.
 
 ## Decisions
 
@@ -38,7 +38,7 @@ flowchart LR
 2. **Redirects pointers held in data**: 228 long values in the tilemap, palette and `0x242800` ranges that follow a routine's `rts`, sit in a run of such pointers, or follow a list terminator (the text printer's lists are `pointer, characters..., 0xFFFE, pointer, ...`). Values in the dual-port RAM's and the registers' ranges are never treated as data pointers: `0x0018` and `0x0024` followed by a small number are common in word tables.
 3. **Replaces the vector table and the header page.** Reset and VBlank (level 6) go to the hardware layer, which calls Data East's handler after reading the pad.
 4. **Replaces the exchanges with the HuC6280** (below).
-5. **Appends** the hardware layer after the program at `0x040000`.
+5. **Appends** the hardware layer after the program at `0x040000`, and the sprite tiles converted to Mega Drive patterns at `0x080000`. The ROM is 2 MB, flat.
 
 About 210 values in hardware ranges are left alone as coincidences. The check for a missed one is dynamic: `tools/mame/md_state.lua` records every access the running build makes to an arcade hardware address, which on the Mega Drive is cartridge space. In 9,000 frames of play through stage 1 and into stage 2 there were none.
 
@@ -83,7 +83,7 @@ So the model equals the HuC6280 on everything the arcade run produced, and the 6
 | Layer 2 scroll tables `0x248000–0x2487FF` | `0xFF5800–0xFF5FFF` |
 | Text tilemap `0x244000–0x245FFF` | `0xFF6000–0xFF7FFF` |
 | Layer 3 scroll tables `0x24C800–0x24CFFF`, and `0x24E000–0x24E7FF` where the game's VBlank handler writes them | `0xFFC800–0xFFCFFF` |
-| Hardware layer's variables | From `0xFFD000`; `0xFF0880–0xFF0FFF` and `0xFFD000–0xFFFFFF` are free |
+| Hardware layer | Variables `0xFFD000`, sprite table copy `0xFFD100`, upload queue `0xFFD300`, cache slot tables `0xFFD500–0xFFD6EF`, converted palettes `0xFFD700`, slot-of-key table `0xFFE000–0xFFF1FF`. Free: `0xFF0880–0xFF0FFF`, `0xFFD760–0xFFDFFF`, `0xFFF200–0xFFFFFF` |
 
 The two palette halves have to stay `0x4000` apart: the game keeps one pointer and adds `0x4000` to reach the blue half (`0x132C`). On real hardware the Mega Drive mirrors work RAM through `0xE00000–0xFFFFFF`, which does not matter here because no arcade address is in that range.
 
@@ -101,15 +101,29 @@ Not done, and not possible as first planned: tracking the arcade's state step fo
 
 There is no picture: the display is on and blank.
 
-### 2. Sprites
+### 2. Sprites — done (emulator), flicker handling open
 
-Sprite RAM translated to the Mega Drive sprite table at each latch.
+`src/sprites.s`. The two writes to the sprite latch (`0x1010` in the VBlank handler, `0x1B86`) call `hal_sprites`, which walks sprite RAM as the MXC06 does and builds the Mega Drive sprite table in RAM; the next VBlank sends the new patterns, the table and the palettes.
 
-- Tile conversion at build time; pattern cache keyed by tile code; flip bits; the link chain built in reverse (the arcade's last entry is on top).
-- Entries cut into pieces of up to 32×32; blank cells skipped.
-- The flash bit.
-- Per-line overflow: rotation, so that dropout becomes flicker. Measure how often it shows. If it is bad, try H40 with borders before anything cleverer.
-- **Done when** stage 1's sprites match the arcade's side by side in snapshots, and the trace shows how many frames exceed the line limits.
+- **Pieces.** An arcade entry is a column of 1, 2, 4 or 8 tiles. A single tile becomes a 16×16 sprite, a taller column 16×32 sprites. Tile pairs are always aligned (the chip rounds the tile code down to a multiple of the height), so the build stores every tile twice: once alone (4 patterns) and once stacked with its neighbour (8 patterns, in the column order a Mega Drive sprite wants). 384 KB each, at `0x080000` and `0x100000`.
+- **Pattern cache.** 120 slots of 8 patterns at VRAM `0x4000–0xB7FF`, keyed by tile or tile pair, with a byte per key saying which slot holds it. A slot not used in the current list can be taken; a clock hand picks the victim.
+- **Order.** Table entry 0 is an off-screen sprite that heads the chain; pieces are linked last to first so the arcade's last entry is on top.
+- **Palettes.** Lines 0 to 2. An arcade sprite palette gets a line when it appears and keeps it while in use; a fourth palette in one list borrows line 0. Colours are cut from 8 bits per channel to 3 at each latch, so fades follow.
+- **Flash bit**: honoured on alternate latches.
+- **Vertical crop**: arcade lines 16 to 239 are shown.
+
+Measured in MAME over 7,746 gameplay frames (stage 1 with its boss, start of stage 2, energy held):
+
+| | mean | 95th | max |
+|---|---|---|---|
+| Sprites in the table | 31.5 | 56 | 63 |
+| Sprites on one line | 11.5 | 20 | 31 |
+| VRAM DMA bytes per frame | 318 | 1,024 | 5,504 |
+
+- 17 pieces were dropped for lack of a table entry in the whole run.
+- **13.4% of frames have more than 16 sprites on some line**, as the arcade trace predicted (11%). The console drops the ones last in the chain, which are the arcade's first entries. Nothing rotates the order yet, so they vanish instead of flickering.
+- The game still runs one step per two frames throughout.
+- Side by side with arcade snapshots the sprites match in shape and colour. Sprites that share line 0 with a fourth palette have not been looked for.
 
 ### 3. Backgrounds, text and palettes
 

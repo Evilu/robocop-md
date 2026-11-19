@@ -4,7 +4,7 @@ A port of Data East's 1988 arcade game *RoboCop* to the Sega Mega Drive / Genesi
 
 The plan is the one used for [Cadillacs and Dinosaurs MD](https://github.com/Evilu/cadillacs-and-dinosaurs-md): the Mega Drive runs Data East's own 68000 program, and only the hardware layer underneath it is replaced (video, palettes, input, sound, the protection processor, memory map). The goal is the whole game, as close to the arcade as the console allows.
 
-**Status: the arcade program runs on the Mega Drive in an emulator, with no picture or sound yet.** The game boots, takes a coin, plays stage 1 and into stage 2 under scripted input, and enemies hit the player through our replacement for the board's protection processor. Drawing it is the next milestone.
+**Status: the arcade program runs on the Mega Drive in an emulator and its sprites are drawn; there are no backgrounds, text or sound yet.** The game boots, takes a coin, plays stage 1 and into stage 2 under scripted input, and enemies hit the player through our replacement for the board's protection processor. Backgrounds are the next milestone.
 
 What the research found, in short:
 
@@ -19,7 +19,7 @@ This repository contains no ROM data. To build, you supply your own dump of the 
 
 ## What you need
 
-- **Your own dump of the arcade game:** MAME's `robocop` set (*Robocop*, World, revision 4), as `robocop.zip` or as a folder of its files. The build checks the four program ROMs by size and CRC32 and tells you which one is missing or wrong. Other revisions and regions (`robocopw`, `robocopj`, `robocopu`, the bootlegs) are not supported.
+- **Your own dump of the arcade game:** MAME's `robocop` set (*Robocop*, World, revision 4), as `robocop.zip` or as a folder of its files. The build checks the four program ROMs and the eight sprite ROMs by CRC32 and tells you which one is missing or wrong. Other revisions and regions (`robocopw`, `robocopj`, `robocopu`, the bootlegs) are not supported.
 - **Python 3.9 or newer**, with `capstone` (`requirements.txt`).
 - **GNU binutils for the 68000** (`as`, `ld`, `objcopy`, `nm`):
   - macOS: `brew install m68k-elf-binutils`
@@ -36,9 +36,9 @@ python3 -m venv .venv
 .venv/bin/python3 build_md.py /path/to/robocop.zip
 ```
 
-The ROM is written to `out/robocop_md.md` (512 KB, no mapper); a second argument chooses another path. The built ROM contains Data East's program: do not share it.
+The ROM is written to `out/robocop_md.md` (2 MB, no mapper); a second argument chooses another path. The built ROM contains Data East's program and graphics: do not share it.
 
-There is nothing to see in it yet: the screen stays black while the game runs underneath. Pad: **A** inserts a coin, **Start** starts, **B** attacks, **C** jumps. It has only been run in MAME. Do not try it on a real console yet.
+You will see the characters moving on a black screen. Where more than 16 sprites share a line, some disappear. Pad: **A** inserts a coin, **Start** starts, **B** attacks, **C** jumps. It has only been run in MAME. Do not try it on a real console yet.
 
 ## Development
 

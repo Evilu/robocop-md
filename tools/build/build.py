@@ -1,6 +1,6 @@
 """Build the Mega Drive ROM from the arcade program image.
 
-usage: build.py <robocop_prg.bin> <out.md>
+usage: build.py <robocop_prg.bin> <robocop_sprites.bin> <out.md>
 
 Takes the 256 KB arcade 68000 program, redirects its hardware addresses to
 copies in work RAM, replaces the vectors and the header page, replaces the
@@ -11,6 +11,8 @@ import struct
 import subprocess
 import sys
 import tempfile
+
+import gfx
 from pathlib import Path
 
 from capstone import CS_ARCH_M68K, CS_MODE_BIG_ENDIAN, CS_MODE_M68K_000, Cs
@@ -19,7 +21,10 @@ ROOT = Path(__file__).resolve().parents[2]
 PREFIX = os.environ.get('M68K_PREFIX', 'm68k-elf-')
 PRG_SIZE = 0x40000
 HAL_BASE = 0x40000
-ROM_SIZE = 0x80000
+ROM_SIZE = 0x200000
+GFX_SINGLE = 0x080000
+GFX_PAIR = 0x100000
+SPRITE_TILES = 3072
 TRAMPOLINE = 0x200
 
 RELOCATIONS = [
@@ -55,16 +60,13 @@ def relocate(addr, limit=False):
 
 
 def assemble():
-    sources = sorted((ROOT / 'src').glob('*.s'))
     with tempfile.TemporaryDirectory() as tmp:
-        elf, out = Path(tmp) / 'hal.elf', Path(tmp) / 'hal.bin'
-        objects = []
-        for src in sources:
-            obj = Path(tmp) / (src.stem + '.o')
-            subprocess.run([PREFIX + 'as', '-m68000', '--register-prefix-optional', '-I', str(ROOT / 'src'),
-                            str(src), '-o', str(obj)], check=True)
-            objects.append(str(obj))
-        subprocess.run([PREFIX + 'ld', '-Ttext', hex(HAL_BASE), '-e', hex(HAL_BASE), '-o', str(elf)] + objects,
+        obj, elf, out = (Path(tmp) / n for n in ('hal.o', 'hal.elf', 'hal.bin'))
+        subprocess.run([PREFIX + 'as', '-m68000', '--register-prefix-optional', '-I', str(ROOT / 'src'),
+                        '--defsym', f'GFX_SINGLE={GFX_SINGLE}', '--defsym', f'GFX_PAIR={GFX_PAIR}',
+                        '--defsym', f'SPRITE_TILES={SPRITE_TILES}',
+                        str(ROOT / 'src' / 'hal.s'), '-o', str(obj)], check=True)
+        subprocess.run([PREFIX + 'ld', '-Ttext', hex(HAL_BASE), '-e', hex(HAL_BASE), '-o', str(elf), str(obj)],
                        check=True)
         subprocess.run([PREFIX + 'objcopy', '-O', 'binary', str(elf), str(out)], check=True)
         nm = subprocess.run([PREFIX + 'nm', str(elf)], check=True, capture_output=True, text=True).stdout
@@ -95,7 +97,7 @@ def expect(rom, off, data):
         sys.exit(f'{off:06x}: expected {data.hex()}, found {found.hex()}: not the robocop revision 4 program')
 
 
-def build(program, out_path):
+def build(program, sprites, out_path):
     if len(program) != PRG_SIZE:
         sys.exit('expected the 256 KB robocop program image')
     rom = bytearray(program)
@@ -115,6 +117,8 @@ def build(program, out_path):
           'routine sequencer replaced')
     patch(0x7630, bytes.fromhex('4279001 80ffe'.replace(' ', '')), call('hal_hit'),
           'HuC6280 interrupt replaced by a call to the hit detection')
+    for site in (0x1010, 0x1b86):
+        patch(site, bytes.fromhex('33c00030c012'), call('hal_sprites'), 'sprite latch: translate the sprite list')
     patch(TRAMPOLINE, bytes(rom[TRAMPOLINE:TRAMPOLINE + 6]), jump('hal_restart'), 'restart trampoline')
     for site in (0x36da, 0x3830):
         expect(rom, site, b'\x4e\xfa' + struct.pack('>h', 0x1bc - (site + 2)))
@@ -186,8 +190,13 @@ def build(program, out_path):
     rom[0x100:0x200] = header(ROM_SIZE - 1)
 
     rom += hal
-    if len(rom) > ROM_SIZE:
+    if len(rom) > GFX_SINGLE:
         sys.exit('hardware layer does not fit')
+    singles, pairs = gfx.sprite_sets(sprites, SPRITE_TILES)
+    rom += b'\xff' * (GFX_SINGLE - len(rom)) + singles
+    rom += b'\xff' * (GFX_PAIR - len(rom)) + pairs
+    report.append(f'sprite patterns: {len(singles)} bytes at {GFX_SINGLE:06x} (16x16), '
+                  f'{len(pairs)} bytes at {GFX_PAIR:06x} (16x32)')
     rom += b'\xff' * (ROM_SIZE - len(rom))
     checksum = sum(struct.unpack_from(f'>{(len(rom) - 0x200) // 2}H', rom, 0x200)) & 0xffff
     struct.pack_into('>H', rom, 0x18e, checksum)
@@ -201,4 +210,4 @@ def build(program, out_path):
 
 
 if __name__ == '__main__':
-    build(Path(sys.argv[1]).read_bytes(), sys.argv[2])
+    build(Path(sys.argv[1]).read_bytes(), Path(sys.argv[2]).read_bytes(), sys.argv[3])
