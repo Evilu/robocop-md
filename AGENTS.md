@@ -2,7 +2,7 @@
 
 A port of Data East's arcade game *RoboCop* (1988, MAME set `robocop`, World revision 4, MEC-M1 board, `dec0` in MAME) to the Sega Mega Drive. The plan is to run Data East's original 68000 program on the Mega Drive's 68000 and replace only the hardware layer, including the work of the board's second processor. Target: the whole game, as close to the arcade as the console allows.
 
-Read `docs/` in order before changing anything: 01 hardware comparison, 02 the arcade against the RoboCop MD demo, 03 the game measured, 04 the port plan and milestone status, 05 save states for every level, 06 the faults found level by level.
+Read `docs/` in order before changing anything: 01 hardware comparison, 02 the arcade against the RoboCop MD demo, 03 the game measured, 04 the port plan and milestone status, 05 save states for every level, 06 the faults found level by level, 07 how the level pick was planned and built.
 
 The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game. Its method, tool layout and conventions are the model here; its numbers are not.
 

@@ -81,6 +81,7 @@ Changes go through branches and pull requests: one branch per change, a pull req
 - [Port plan](docs/04-port-plan.md)
 - [Save states for every level](docs/05-save-states.md)
 - [Every level: arcade vs the Mega Drive build](docs/06-levels-arcade-vs-md.md)
+- [Picking a level: how it was planned and built](docs/07-level-select.md)
 - [Analysis tools](tools/README.md)
 
 ## Rights
