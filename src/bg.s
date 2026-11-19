@@ -48,7 +48,7 @@
     .equ bg_hold,       BG_VARS + 50    | a scene's palette has arrived: latches left before it is built regardless
     .equ bg_bad,        BG_VARS + 52    | the colour tables have gone wrong: latches left before a rebuild regardless
     .equ HOLD_LATCHES,  12
-    .equ DARK_TEARDOWN, 8    | updates with a black palette before the scene is given up (the text may then have a plane)
+    .equ DARK_TEARDOWN, 8    | updates with a black palette, while the text has no plane, before the scene is given up so that it can have one
     .equ BG_KNOWN,      0xff1070    | per layer: the palettes whose pens have a line colour each, or all ones
     .equ bg_front,      BG_VARS + 62    | 0x8000 while the arcade draws some sprites behind layer 2
     .equ BG_SIGNATURE,  BG_VARS + 54    | per layer: palettes its map used and the map's checksum when its colours were chosen
@@ -169,6 +169,8 @@ bg_update:
     beq.s   0f
     cmpi.w  #DARK_TEARDOWN, bg_dark
     bhs.w   5f
+    tst.w   text_plane
+    bne.w   5f
     addq.w  #1, bg_dark
     cmpi.w  #DARK_TEARDOWN, bg_dark
     bne.w   5f
