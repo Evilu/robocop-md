@@ -112,3 +112,11 @@ python3 -I ../../tools/analysis/hit_model.py ../work/robocop_prg.bin hit_arcade/
 ```
 
 `hit_capture.lua` records the dual-port RAM (or its stand-in on the Mega Drive) before and after each hit detection pass. `hit_model.py` runs a model of the HuC6280's routine on each input and counts outputs that differ: the arcade capture checks the model against the real HuC6280 program, the Mega Drive capture checks the port's routine against the model.
+
+## 9. Confirm the picture in ares
+
+```sh
+tools/check_ares.sh test/roms/md/robocop_md.md analysis/mame/ares_check 16 3
+```
+
+Opens ares with the ROM, captures only its window (16 times, 3 seconds apart here), closes the ares it started and writes `ares_sheet.png` in the output folder. ares is stricter than MAME about the VDP and is the last check before a change is called done. It takes no scripted input, so it shows the attract sequence, which ends in a gameplay demo. `ARES` names the binary (default `~/Downloads/ares-v148/ares.app/Contents/MacOS/ares`); the terminal needs macOS screen recording permission.

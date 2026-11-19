@@ -31,6 +31,19 @@ def pattern(rows, x, y):
     return bytes(out)
 
 
+def characters(region):
+    """The 8x8 characters: bit 3 of a pixel in quarter 0, bit 2 in quarter 2, bit 1 in quarter 1, bit 0 in quarter 3."""
+    quarter = len(region) // 4
+    out = bytearray()
+    for code in range(quarter // 8):
+        for y in range(8):
+            bits = [region[q * quarter + code * 8 + y] for q in (0, 2, 1, 3)]
+            row = [(bits[0] >> s & 1) << 3 | (bits[1] >> s & 1) << 2 | (bits[2] >> s & 1) << 1 | (bits[3] >> s & 1)
+                   for s in range(7, -1, -1)]
+            out += bytes(row[x] << 4 | row[x + 1] for x in range(0, 8, 2))
+    return bytes(out)
+
+
 def plane_tiles(region, tiles):
     """Each tile as four plane cells: top left, top right, bottom left, bottom right."""
     out = bytearray()

@@ -1,6 +1,6 @@
 """Build the Mega Drive ROM from the arcade program image.
 
-usage: build.py <robocop_prg.bin> <robocop_sprites.bin> <robocop_tiles1.bin> <robocop_tiles2.bin> <out.md>
+usage: build.py <robocop_prg.bin> <robocop_sprites.bin> <robocop_tiles1.bin> <robocop_tiles2.bin> <robocop_char.bin> <out.md>
 
 Takes the 256 KB arcade 68000 program, redirects its hardware addresses to
 copies in work RAM, replaces the vectors and the header page, replaces the
@@ -26,7 +26,8 @@ GFX_SINGLE = 0x080000
 GFX_PAIR = 0x100000
 SPRITE_TILES = 3072
 GFX_TILES = 0x180000
-GFX_BLANK = 0x1e0000
+GFX_BLANK = 0x070000
+GFX_CHARS = 0x1e0000
 TRAMPOLINE = 0x200
 
 RELOCATIONS = [
@@ -67,7 +68,7 @@ def assemble():
         subprocess.run([PREFIX + 'as', '-m68000', '--register-prefix-optional', '-I', str(ROOT / 'src'),
                         '--defsym', f'GFX_SINGLE={GFX_SINGLE}', '--defsym', f'GFX_PAIR={GFX_PAIR}',
                         '--defsym', f'SPRITE_TILES={SPRITE_TILES}',
-                        '--defsym', f'GFX_TILES={GFX_TILES}', '--defsym', f'GFX_BLANK={GFX_BLANK}',
+                        '--defsym', f'GFX_TILES={GFX_TILES}', '--defsym', f'GFX_BLANK={GFX_BLANK}', '--defsym', f'GFX_CHARS={GFX_CHARS}',
                         str(ROOT / 'src' / 'hal.s'), '-o', str(obj)], check=True)
         subprocess.run([PREFIX + 'ld', '-Ttext', hex(HAL_BASE), '-e', hex(HAL_BASE), '-o', str(elf), str(obj)],
                        check=True)
@@ -100,7 +101,7 @@ def expect(rom, off, data):
         sys.exit(f'{off:06x}: expected {data.hex()}, found {found.hex()}: not the robocop revision 4 program')
 
 
-def build(program, sprites, tiles1, tiles2, out_path):
+def build(program, sprites, tiles1, tiles2, chars, out_path):
     if len(program) != PRG_SIZE:
         sys.exit('expected the 256 KB robocop program image')
     rom = bytearray(program)
@@ -122,6 +123,8 @@ def build(program, sprites, tiles1, tiles2, out_path):
           'HuC6280 interrupt replaced by a call to the hit detection')
     for site in (0x1010, 0x1b86):
         patch(site, bytes.fromhex('33c00030c012'), call('hal_sprites'), 'sprite latch: translate the sprite list')
+    patch(0x761c, bytes.fromhex('3e3c04af'), bytes.fromhex('600a4e71'), 'object records no longer copied to the dual-port RAM')
+    patch(0x767c, bytes.fromhex('3e3c04af'), bytes.fromhex('4e754e71'), 'object records no longer copied back')
     patch(TRAMPOLINE, bytes(rom[TRAMPOLINE:TRAMPOLINE + 6]), jump('hal_restart'), 'restart trampoline')
     for site in (0x36da, 0x3830):
         expect(rom, site, b'\x4e\xfa' + struct.pack('>h', 0x1bc - (site + 2)))
@@ -193,18 +196,22 @@ def build(program, sprites, tiles1, tiles2, out_path):
     rom[0x100:0x200] = header(ROM_SIZE - 1)
 
     rom += hal
-    if len(rom) > GFX_SINGLE:
+    if len(rom) > GFX_BLANK:
         sys.exit('hardware layer does not fit')
+    layer2, layer3 = gfx.plane_tiles(tiles1, 2048), gfx.plane_tiles(tiles2, 1024)
+    text = gfx.characters(chars)
+    blank = bytes(not any(layer2[t * 128:(t + 1) * 128]) for t in range(2048)) + bytes(1024)
+    blank += bytes(not any(text[c * 32:(c + 1) * 32]) for c in range(4096))
+    rom += b'\xff' * (GFX_BLANK - len(rom)) + blank
     singles, pairs = gfx.sprite_sets(sprites, SPRITE_TILES)
     rom += b'\xff' * (GFX_SINGLE - len(rom)) + singles
     rom += b'\xff' * (GFX_PAIR - len(rom)) + pairs
     report.append(f'sprite patterns: {len(singles)} bytes at {GFX_SINGLE:06x} (16x16), '
                   f'{len(pairs)} bytes at {GFX_PAIR:06x} (16x32)')
-    layer2, layer3 = gfx.plane_tiles(tiles1, 2048), gfx.plane_tiles(tiles2, 1024)
-    blank = bytes(not any(layer2[t * 128:(t + 1) * 128]) for t in range(2048)) + bytes(1024)
     rom += b'\xff' * (GFX_TILES - len(rom)) + layer2 + layer3
-    rom += b'\xff' * (GFX_BLANK - len(rom)) + blank
-    report.append(f'tile patterns: {len(layer2) + len(layer3)} bytes at {GFX_TILES:06x}; {sum(blank)} blank layer 2 tiles')
+    rom += b'\xff' * (GFX_CHARS - len(rom)) + text
+    report.append(f'tile patterns: {len(layer2) + len(layer3)} bytes at {GFX_TILES:06x}; '
+                  f'characters: {len(text)} bytes at {GFX_CHARS:06x}')
     rom += b'\xff' * (ROM_SIZE - len(rom))
     checksum = sum(struct.unpack_from(f'>{(len(rom) - 0x200) // 2}H', rom, 0x200)) & 0xffff
     struct.pack_into('>H', rom, 0x18e, checksum)
@@ -218,4 +225,4 @@ def build(program, sprites, tiles1, tiles2, out_path):
 
 
 if __name__ == '__main__':
-    build(*(Path(a).read_bytes() for a in sys.argv[1:5]), sys.argv[5])
+    build(*(Path(a).read_bytes() for a in sys.argv[1:6]), sys.argv[6])

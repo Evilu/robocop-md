@@ -23,6 +23,7 @@
     .equ PLAYER_BOXES,  0x248a + SUB_ROM
     .equ OBJECT_BOXES,  0x24da + SUB_ROM
     .equ RECORDS,       30
+    .equ OBJECTS,       0xff983c
 
     .equ VDP_DATA,      0xc00000
     .equ VDP_CTRL,      0xc00004
@@ -74,6 +75,9 @@ hal_boot:
     bsr.w   idle_inputs
     bsr.w   sprites_init
     bsr.w   bg_reset
+    move.w  #1, bg_dark
+    clr.w   bg_loading
+    bsr.w   text_init
 
     moveq   #0, d7
     move.b  #1, IO + 0x15
@@ -106,6 +110,7 @@ hal_vblank:
     move.w  VDP_CTRL, d0
     bsr.w   sprites_flush
     bsr.w   bg_scroll
+    bsr.w   hal_idle
     addq.l  #1, hal_frames
     bsr.w   read_pad
     tst.w   0xff8dca
@@ -135,23 +140,25 @@ hal_sequence:
     moveq   #2, d0
     rts
 
-| The HuC6280's interrupt routine (0x2261 in its program), on the object
-| records the game has just copied into the dual-port RAM's stand-in.
+| The HuC6280's interrupt routine (0x2261 in its program). The player's values
+| are the ones the game has just put in the dual-port RAM's stand-in; the
+| object records are read and marked where the game keeps them (the build
+| takes out the game's copy of them to the dual-port RAM and back).
 hal_hit:
     movem.l d0-d7/a0-a6, -(sp)
     lea     SHARED, a6
     moveq   #0, d7
     move.b  0x23(a6), d7
-    lea     0x25(a6), a2
+    lea     OBJECTS, a2
     moveq   #RECORDS - 1, d6
 hit_record:
     tst.w   d7
     beq.w   hit_done
     tst.b   (a2)
     beq.w   hit_skip
-    btst    #0, 0x4e(a2)
+    btst    #0, 0x27(a2)
     bne.w   hit_counted
-    tst.b   0x3e(a2)
+    tst.b   0x1f(a2)
     bne.w   hit_counted
     moveq   #0, d0
     move.b  (a2), d0
@@ -163,19 +170,19 @@ hit_record:
     lea     SUB_ROM, a0
     adda.l  d1, a0
     moveq   #0, d0
-    move.b  0x2c(a2), d0
+    move.b  0x16(a2), d0
     add.b   d0, d0
     adda.w  d0, a0
     moveq   #0, d1
     le16    0, a0, d1
     lea     SUB_ROM, a3
     adda.l  d1, a3
-    move.b  4(a2), d2
+    move.b  2(a2), d2
     lsl.w   #8, d2
-    move.b  6(a2), d2
-    move.b  12(a2), d3
+    move.b  3(a2), d2
+    move.b  6(a2), d3
     lsl.w   #8, d3
-    move.b  14(a2), d3
+    move.b  7(a2), d3
     moveq   #0, d0
     move.b  0x0d(a6), d0
     add.b   d0, d0
@@ -195,9 +202,9 @@ hit_record:
     beq.s   hit_counted
     cmpi.b  #6, (a2)
     beq.s   1f
-    move.b  #4, 0x3e(a2)
+    move.b  #4, 0x1f(a2)
     bra.s   2f
-1:  bset    #0, 0x4e(a2)
+1:  bset    #0, 0x27(a2)
 2:  moveq   #0, d0
     move.b  (a2), d0
     lea     DAMAGE, a0
@@ -206,7 +213,7 @@ hit_record:
 hit_counted:
     subq.w  #1, d7
 hit_skip:
-    lea     0x50(a2), a2
+    lea     0x28(a2), a2
     dbra    d6, hit_record
 hit_done:
     clr.b   9(a6)
@@ -310,6 +317,7 @@ read_pad:
 
     .include "sprites.s"
     .include "bg.s"
+    .include "text.s"
 
 hal_crash:
     move.w  #0x2700, sr

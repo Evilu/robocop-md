@@ -25,11 +25,17 @@
     .equ spr_height,    HAL_VARS + 0x22
     .equ spr_piece,     HAL_VARS + 0x24
     .equ spr_dropped,   HAL_VARS + 0x26
+    .equ spr_limit,     HAL_VARS + 0x42
+    .equ spr_game,      HAL_VARS + 0x44    | game sprites in the table, plus the heading entry
+    .equ hal_tick,      HAL_VARS + 0x46
+    .equ since_latch,   HAL_VARS + 0x48
+    .equ IDLE_FRAMES,   4
+    .equ PAL_COUNT,     0xff1600    | 16 bytes: sprites using each arcade palette in the list being walked
     .equ LINE_STAMP,    HAL_VARS + 0x28    | 3 words
     .equ LINE_PAL,      HAL_VARS + 0x2e    | 3 bytes: arcade palette on each line, 0xff = none
     .equ PAL_LINE,      HAL_VARS + 0x32    | 16 bytes: line of each arcade palette, 0xff = none
 
-    .equ SLOTS,         80
+    .equ SLOTS,         65
     .equ MAX_UPLOADS,   64
     .equ MAX_SPRITES,   64
     .equ SPRITE_PATTERNS, 0x340
@@ -60,6 +66,15 @@ hal_sprites:
     beq.s   1f
     bsr.w   sprites_flush
 1:  addq.w  #1, spr_stamp
+    addq.w  #1, hal_tick
+    clr.w   since_latch
+    bsr.w   bg_update
+    bsr.w   text_update
+    move.w  #MAX_SPRITES, d0
+    btst    #0, hal_tick + 1
+    beq.s   2f
+    sub.w   text_active, d0
+2:  move.w  d0, spr_limit
     lea     SPRITE_RAM, a0
     lea     SAT_BUFFER + 8, a2
     moveq   #1, d7
@@ -100,7 +115,7 @@ spr_entry:
 3:  neg.w   d2
     addi.w  #240, d2
     move.w  d2, spr_y
-    move.w  #0x8000, d5
+    moveq   #0, d5
     btst    #13, d0
     beq.s   4f
     ori.w   #0x0800, d5
@@ -176,21 +191,53 @@ spr_next_column:
     bne.w   spr_column
     bra.w   spr_entry
 spr_end:
+    move.w  d7, spr_game
+    bsr.w   text_sprites
     lea     SAT_BUFFER, a2
     clr.w   (a2)+
     move.w  d7, d0
     subq.w  #1, d0
     move.w  d0, (a2)+
     clr.l   (a2)
+    bsr.w   palette_assign
     bsr.w   palettes_convert
     move.w  #1, spr_ready
-    bsr.w   bg_update
     movem.l (sp)+, d0-d7/a0-a6
     rts
 
+| Called every VBlank. When the game has not latched its sprites for a few frames
+| (text screens never do), the tile layers and the text are brought up to date
+| here and the text's sprites are put after the last game sprites.
+hal_idle:
+    addq.w  #1, since_latch
+    cmpi.w  #IDLE_FRAMES, since_latch
+    blo.s   1f
+    clr.w   since_latch
+    movem.l d0-d7/a0-a6, -(sp)
+    addq.w  #1, hal_tick
+    bsr.w   bg_update
+    bsr.w   text_update
+    move.w  spr_game, d7
+    bne.s   2f
+    moveq   #1, d7
+2:  move.w  d7, d0
+    lsl.w   #3, d0
+    lea     SAT_BUFFER, a2
+    adda.w  d0, a2
+    bsr.w   text_sprites
+    lea     SAT_BUFFER, a2
+    clr.w   (a2)+
+    move.w  d7, d0
+    subq.w  #1, d0
+    move.w  d0, (a2)+
+    clr.l   (a2)
+    move.w  #1, spr_ready
+    movem.l (sp)+, d0-d7/a0-a6
+1:  rts
+
 | d2 = key, d0 = top line, d1 = left column, d5 = attributes, a2 = next table entry, d7 = its index.
 spr_emit:
-    cmpi.w  #MAX_SPRITES, d7
+    cmp.w   spr_limit, d7
     bhs.s   8f
     cmpi.w  #BOTTOM_LINE, d0
     bge.s   9f
@@ -285,38 +332,157 @@ slot_use:
     move.w  d6, d2
     rts
 
-| d2 = arcade sprite palette (0-15). Returns its palette line (0-1) in d2.
+| d2 = arcade sprite palette (0-15). Returns its palette line (0-1) in d2 and counts the use.
 palette_line:
+    lea     PAL_COUNT, a3
+    addq.b  #1, (a3, d2.w)
     lea     PAL_LINE, a3
     moveq   #0, d6
     move.b  (a3, d2.w), d6
-    bpl.s   3f
-    lea     LINE_STAMP, a4
-    move.w  spr_stamp, d6
-    cmp.w   (a4), d6
-    bne.s   1f
-    addq.l  #2, a4
-    cmp.w   (a4), d6
-    bne.s   1f
-    moveq   #0, d2
+    bpl.s   1f
+    moveq   #0, d6
+1:  move.w  d6, d2
     rts
-1:  suba.l  #LINE_STAMP, a4
-    move.w  a4, d6
-    lsr.w   #1, d6
-    lea     LINE_PAL, a4
-    move.w  d0, -(sp)
+
+| After a list has been walked: the two palettes used by the most sprites own
+| lines 0 and 1 (a palette that already has a line keeps it). Every other
+| palette in use is shown with the line whose owner's colours are closest to
+| its own, pen for pen. Takes effect from the next list.
+palette_assign:
+    lea     PAL_COUNT, a0
+    moveq   #-1, d1
+    moveq   #0, d2
+    moveq   #-1, d3
+    moveq   #0, d4
     moveq   #0, d0
-    move.b  (a4, d6.w), d0
+1:  moveq   #0, d5
+    move.b  (a0, d0.w), d5
+    cmp.w   d2, d5
+    bls.s   2f
+    move.w  d1, d3
+    move.w  d2, d4
+    move.w  d0, d1
+    move.w  d5, d2
+    bra.s   3f
+2:  cmp.w   d4, d5
+    bls.s   3f
+    move.w  d0, d3
+    move.w  d5, d4
+3:  addq.w  #1, d0
+    cmpi.w  #16, d0
+    bne.s   1b
+    lea     LINE_PAL, a1
+    moveq   #0, d5
+    move.b  (a1), d5
+    moveq   #0, d6
+    move.b  1(a1), d6
+    cmp.b   d5, d1
+    beq.s   4f
+    cmp.b   d5, d3
+    beq.s   5f
+    cmp.b   d6, d1
+    beq.s   6f
+    cmp.b   d6, d3
+    beq.s   7f
+    move.b  d1, (a1)
+    move.b  d3, 1(a1)
+    bra.s   8f
+4:  cmp.b   d6, d3
+    beq.s   9f
+    tst.w   d3
+    bmi.s   9f
+    move.b  d3, 1(a1)
+    bra.s   8f
+5:  cmp.b   d6, d1
+    beq.s   9f
+    move.b  d1, 1(a1)
+    bra.s   8f
+6:  tst.w   d3
+    bmi.s   9f
+    move.b  d3, (a1)
+    bra.s   8f
+7:  move.b  d1, (a1)
+8:  lea     PAL_LINE, a2
+    moveq   #-1, d0
+    move.l  d0, (a2)+
+    move.l  d0, (a2)+
+    move.l  d0, (a2)+
+    move.l  d0, (a2)+
+9:  lea     PAL_LINE, a2
+    moveq   #0, d0
+    move.b  (a1), d0
+    bmi.s   1f
+    clr.b   (a2, d0.w)
+1:  move.b  1(a1), d0
     bmi.s   2f
-    st      (a3, d0.w)
-2:  move.w  (sp)+, d0
-    move.b  d2, (a4, d6.w)
-    move.b  d6, (a3, d2.w)
-3:  add.w   d6, d6
-    lea     LINE_STAMP, a4
-    move.w  spr_stamp, (a4, d6.w)
-    lsr.w   #1, d6
-    move.w  d6, d2
+    move.b  #1, (a2, d0.w)
+2:  moveq   #0, d7
+3:  tst.b   (a0, d7.w)
+    beq.s   6f
+    tst.b   (a2, d7.w)
+    bpl.s   6f
+    moveq   #0, d1
+    move.b  (a1), d1
+    bmi.s   6f
+    bsr.s   palette_distance
+    move.l  d2, d6
+    moveq   #0, d5
+    moveq   #0, d1
+    move.b  1(a1), d1
+    bmi.s   5f
+    bsr.s   palette_distance
+    cmp.l   d6, d2
+    bhs.s   5f
+    moveq   #1, d5
+5:  move.b  d5, (a2, d7.w)
+6:  clr.b   (a0, d7.w)
+    addq.w  #1, d7
+    cmpi.w  #16, d7
+    bne.s   3b
+    rts
+
+| d7 and d1 = two arcade sprite palettes. Returns in d2 how far apart their 15 colours are.
+palette_distance:
+    movem.l d3-d4/a0-a3, -(sp)
+    lea     PALETTE_RG + 0x202, a0
+    lea     PALETTE_B + 0x203, a2
+    movea.l a0, a1
+    movea.l a2, a3
+    move.w  d7, d0
+    lsl.w   #5, d0
+    adda.w  d0, a0
+    adda.w  d0, a2
+    lsl.w   #5, d1
+    adda.w  d1, a1
+    adda.w  d1, a3
+    moveq   #0, d2
+    moveq   #14, d3
+1:  moveq   #0, d0
+    moveq   #0, d4
+    move.b  (a0)+, d0
+    move.b  (a1)+, d4
+    sub.w   d4, d0
+    bpl.s   2f
+    neg.w   d0
+2:  add.l   d0, d2
+    moveq   #0, d0
+    move.b  (a0)+, d0
+    move.b  (a1)+, d4
+    sub.w   d4, d0
+    bpl.s   3f
+    neg.w   d0
+3:  add.l   d0, d2
+    moveq   #0, d0
+    move.b  (a2), d0
+    move.b  (a3), d4
+    sub.w   d4, d0
+    bpl.s   4f
+    neg.w   d0
+4:  add.l   d0, d2
+    addq.l  #2, a2
+    addq.l  #2, a3
+    dbra    d3, 1b
+    movem.l (sp)+, d3-d4/a0-a3
     rts
 
 | Arcade palette entries (8 bits per channel, red and green in one word, blue in
@@ -333,7 +499,10 @@ palettes_convert:
     adda.w  d0, a0
     lea     PALETTE_B + 0x200, a1
     adda.w  d0, a1
-    moveq   #15, d6
+    clr.w   (a2)+
+    addq.l  #2, a0
+    addq.l  #2, a1
+    moveq   #14, d6
 2:  move.w  (a0)+, d0
     move.w  (a1)+, d1
     move.w  d0, d2
