@@ -139,3 +139,24 @@ analysis/venv/bin/python3 -I tools/build/sound.py analysis/work/robocop_snd.bin 
 | `analysis/compare_audio.py` | Compares the pitch content of two recordings made with MAME's `-wavwrite`: best lag, chroma agreement, and the same after shifting one by each number of semitones |
 
 To record: add `-wavwrite <file.wav>` to a MAME run of either machine (it works with `-sound none`). `compare_audio.py` needs numpy (in `analysis/venv`).
+
+## Levels and save states
+
+```sh
+tools/level_states.sh test/roms/md/robocop_md.md          # a save state per scene, arcade and Mega Drive
+tools/compare_levels.sh test/roms/md/robocop_md.md 3600   # sheets in analysis/out/levels, arcade above the port
+LOAD=scene8 POKE="ffb235=07@300" TRACE_FRAMES=3900 SNAP_EVERY=150 tools/level.sh arcade analysis/mame/level_runs/ending
+analysis/venv/bin/python3 -I build_md.py robocop.zip test/roms/md/robocop_md_scene3.md --scene 3   # self-starting ROM for ares
+```
+
+`docs/05-save-states.md` explains the method; the `level-states` skill lists every setting.
+
+## Another emulator core
+
+```sh
+cc -O2 -o analysis/gpgx/run_core tools/gpgx/run_core.c
+analysis/gpgx/run_core <core.dylib> test/roms/md/robocop_md.md 3600 out.wav [last_frame.ppm]
+```
+
+Runs a libretro core headless with a coin and start, writes the audio and prints the peak level every 300 frames. Used with Genesis Plus GX to check sound outside MAME.
+

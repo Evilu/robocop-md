@@ -1,7 +1,8 @@
 | The arcade's text layer (8x8 characters over everything).
-| The visible 32 x 28 characters are divided into blocks of 4 x 2.
+| Its 32 x 32 characters are divided into blocks of 4 x 2.
 | When one of the tile layers is blank, the text is written into that layer's
-| plane as high-priority cells, each character's pattern loaded once.
+| plane as high-priority cells, each character's pattern loaded once, and the
+| plane follows the text layer's scroll registers (the staff roll scrolls).
 | Otherwise (the stages that use both layers) a block with anything in it owns
 | eight patterns in VRAM and is shown as one 32x16 sprite, in front of the
 | game's sprites; 20 blocks at most. A checksum per block tells when its
@@ -10,8 +11,8 @@
 | layers' colour tables.
 
     .equ TEXT_MAP,      0xff6000
-    .equ BLOCK_SUM,     0xff0e40    | 112 words
-    .equ BLOCK_SLOT,    0xff0f20    | 112 bytes: pattern slot + 1, 0 = nothing shown
+    .equ BLOCK_SUM,     0xff1880    | 128 words
+    .equ BLOCK_SLOT,    0xff0e40    | 128 bytes: pattern slot + 1, 0 = nothing shown
     .equ TEXT_SLOT_USED, 0xff0f90   | 20 bytes
     .equ text_budget,   0xff0fb0
     .equ text_active,   0xff0fb2
@@ -25,6 +26,9 @@
     .equ text_planes_left, 0xff1046
     .equ text_inexact,  0xff1048
     .equ text_curtain,  0xff104a
+    .equ text_coarse,   0xff104c    | the text layer's vertical scroll in block rows, as last seen
+    .equ TEXT_SCROLL_Y, 0xff0812
+    .equ TEXT_PER_SCROLL, 4
     .equ TEXT_CELLS,    0xff1050
     .equ BLOCK_STALE,   0xff1060    | a bit per block: draw it again whatever its checksum says    | 8 words: the block being written
     .equ CHAR_KEYS,     0xff1100    | 160 words: the character and palette in each pattern, 0xffff = free
@@ -32,7 +36,7 @@
     .equ CHAR_LIMIT,    150
     .equ TEXT_PLANE_BLOCKS, 8
 
-    .equ TEXT_BLOCKS,   112
+    .equ TEXT_BLOCKS,   128
     .equ TEXT_SLOTS,    20
     .equ TEXT_PALETTES, 12
     .equ TEXT_PER_LATCH, 1
@@ -196,15 +200,14 @@ text_leave:
     clr.w   text_active
     rts
 
-| Blanks the 32 x 28 cells of the text's plane.
+| Blanks the 32 x 64 cells of the text's plane that the text can reach.
 text_plane_clear:
     move.w  text_plane, d0
-    addi.w  #2 * 128, d0
     andi.w  #0x3fff, d0
     ori.w   #0x4000, d0
     swap    d0
     move.w  #3, d0
-    moveq   #27, d1
+    moveq   #63, d1
 1:  move.l  d0, VDP_CTRL
     moveq   #15, d2
 2:  move.l  #0, VDP_DATA
@@ -228,6 +231,22 @@ text_update:
     clr.w   text_flush
 2:  move.w  #TEXT_PLANE_BLOCKS, text_planes_left
     move.w  #TEXT_PER_LATCH, text_budget
+    move.w  TEXT_SCROLL_Y, d0
+    beq.s   0f
+    move.w  #TEXT_PER_SCROLL, text_budget
+0:  lsr.w   #4, d0
+    cmp.w   text_coarse, d0
+    beq.s   0f
+    move.w  d0, text_coarse
+    tst.w   text_plane
+    bne.s   0f
+    lea     BLOCK_STALE, a0
+    moveq   #-1, d0
+    move.l  d0, (a0)+
+    move.l  d0, (a0)+
+    move.l  d0, (a0)+
+    move.l  d0, (a0)+
+0:
     move.w  hal_tick, d7
     andi.w  #3, d7
     mulu.w  #TEXT_BLOCKS / 4, d7
@@ -239,7 +258,7 @@ text_update:
     andi.w  #7, d1
     lsl.w   #3, d1
     add.w   d1, d0
-    lea     TEXT_MAP + 128, a0
+    lea     TEXT_MAP, a0
     adda.w  d0, a0
     moveq   #0, d0
     add.w   (a0), d0
@@ -288,6 +307,14 @@ text_update:
 text_block:
     lea     CHAR_BLANK, a2
     moveq   #0, d2
+    move.w  text_block_no, d0
+    lsr.w   #3, d0
+    lsl.w   #4, d0
+    sub.w   TEXT_SCROLL_Y, d0
+    andi.w  #0xff, d0
+    subq.w  #1, d0
+    cmpi.w  #239, d0
+    bhs.s   4f
     lea     (a0), a1
     moveq   #1, d1
 1:  moveq   #3, d3
@@ -299,7 +326,7 @@ text_block:
 3:  dbra    d3, 2b
     lea     56(a1), a1
     dbra    d1, 1b
-    lea     BLOCK_SLOT, a3
+4:  lea     BLOCK_SLOT, a3
     adda.w  text_block_no, a3
     moveq   #0, d5
     move.b  (a3), d5
@@ -372,7 +399,6 @@ text_block_plane:
     move.w  text_block_no, d0
     move.w  d0, d1
     lsr.w   #3, d1
-    addq.w  #1, d1
     lsl.w   #8, d1
     andi.w  #7, d0
     lsl.w   #3, d0
@@ -382,7 +408,8 @@ text_block_plane:
     ori.w   #0x4000, d1
     swap    d1
     move.w  #3, d1
-    lea     TEXT_CELLS, a1
+    moveq   #1, d0
+3:  lea     TEXT_CELLS, a1
     move.l  d1, VDP_CTRL
     move.l  (a1)+, VDP_DATA
     move.l  (a1)+, VDP_DATA
@@ -390,6 +417,8 @@ text_block_plane:
     move.l  d1, VDP_CTRL
     move.l  (a1)+, VDP_DATA
     move.l  (a1)+, VDP_DATA
+    addi.l  #0x0f800000, d1
+    dbra    d0, 3b
     subq.w  #1, text_planes_left
     bra.w   text_block_done
 
@@ -533,7 +562,9 @@ text_sprites:
     move.w  d6, d1
     lsr.w   #3, d1
     lsl.w   #4, d1
-    addi.w  #128, d1
+    sub.w   TEXT_SCROLL_Y, d1
+    andi.w  #0xff, d1
+    addi.w  #112, d1
     move.w  d1, (a2)+
     move.w  #0x0d00, d1
     move.b  d7, d1
