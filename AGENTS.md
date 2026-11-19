@@ -44,7 +44,9 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 
 ## Environment
 
-- ares v148 is at `~/Downloads/ares-v148/ares.app` (`ARES` overrides the binary). Its window can be captured because the terminal has macOS screen recording permission. Its Mega Drive pad is not mapped and it takes no scripted input, so an ares check shows attract mode only; gameplay is checked in MAME.
+- ares v148 is at `~/Downloads/ares-v148/ares.app` (`ARES` overrides the binary). Its window can be captured because the terminal has macOS screen recording permission. Its Mega Drive pad is not mapped and it takes no scripted input, so an ares check shows what a ROM does by itself: the attract sequence, or a stage with a `--scene` ROM (the stage appears about 18 seconds in, after the story pages). Play with a pad is checked in MAME.
+- **ares draws nothing while the Mac's screen is locked or asleep.** Every capture is then black with no `VPS` figure in the status bar, for any ROM. Before blaming a build, run the previous ROM: if that is black too, the screen is locked. A full round (the normal ROM and seven scene ROMs) takes about ten minutes of unlocked screen; build the ROMs first and capture straight after.
+- Genesis Plus GX runs headless through `tools/gpgx/run_core.c` (the core is downloaded to `analysis/gpgx/core/`): a third emulator for the picture's last frame and the audio when ares cannot be used. It does not replace the ares check.
 - MAME 0.289 and `m68k-elf-binutils` from Homebrew. Ghidra 12.2 is at `/opt/homebrew/opt/ghidra/libexec` and needs `JAVA_HOME=/opt/homebrew/opt/openjdk@25` (it refuses Java 21).
 - Python helpers that need `capstone` or `Pillow` run from `analysis/venv/bin/python3`.
 - The user's `robocop.zip` holds the two video PROMs at twice MAME's size under shorter names; `tools/prep_roms.py` writes a set MAME verifies to `analysis/mame/roms/`. Run MAME from `analysis/mame` with `-rompath roms`.
