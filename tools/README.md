@@ -146,7 +146,7 @@ To record: add `-wavwrite <file.wav>` to a MAME run of either machine (it works 
 tools/level_states.sh test/roms/md/robocop_md.md          # a save state per scene, arcade and Mega Drive
 tools/compare_levels.sh test/roms/md/robocop_md.md 3600   # sheets in analysis/out/levels, arcade above the port
 LOAD=scene8 POKE="ffb235=07@300" TRACE_FRAMES=3900 SNAP_EVERY=150 tools/level.sh arcade analysis/mame/level_runs/ending
-BOOT_SCENE=3 analysis/venv/bin/python3 -I build_md.py robocop.zip test/roms/md/robocop_md_scene3.md   # self-starting ROM for ares
+analysis/venv/bin/python3 -I build_md.py robocop.zip test/roms/md/robocop_md_scene3.md --scene 3   # self-starting ROM for ares
 ```
 
 `docs/05-save-states.md` explains the method; the `level-states` skill lists every setting.

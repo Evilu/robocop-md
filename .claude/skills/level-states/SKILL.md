@@ -57,11 +57,11 @@ One sheet per scene in `analysis/out/levels/scene<N>.png`, arcade above the Mega
 ares takes no scripted input and cannot load MAME's states. Build a ROM that starts by itself in a scene:
 
 ```sh
-BOOT_SCENE=3 analysis/venv/bin/python3 -I build_md.py robocop.zip test/roms/md/robocop_md_scene3.md
+analysis/venv/bin/python3 -I build_md.py robocop.zip test/roms/md/robocop_md_scene3.md --scene 3
 tools/check_ares.sh test/roms/md/robocop_md_scene3.md analysis/mame/ares_scene3 12 3
 ```
 
-The ROM presses coin and start itself and forces the scene; the stage appears after the story pages, about 18 seconds in. Nobody holds the pad, so the player stands still and dies. Never hand a `BOOT_SCENE` ROM out as the game.
+The ROM presses coin and start itself and forces the scene; the stage appears after the story pages, about 18 seconds in. Nobody holds the pad, so the player stands still and dies. Never hand a `--scene` ROM out as the game.
 
 ## Finding a new variable
 

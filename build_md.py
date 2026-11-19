@@ -1,11 +1,17 @@
 """Build the Mega Drive ROM from your copy of the arcade game.
 
-usage: python3 build_md.py <robocop.zip or folder> [out.md]
+usage: python3 build_md.py <robocop.zip or folder> [out.md] [--scene N]
 
 Takes MAME's "robocop" set (Robocop, World, revision 4), checks the files the
 port uses, and writes the Mega Drive ROM (default out/robocop_md.md). The set
 is read straight from the zip; nothing is extracted to disk.
+
+--scene N builds a test ROM that inserts a coin, presses start and begins in
+scene N by itself: 0 stage 1, 1 stage 2, 2 bonus stage, 3 stage 4, 4 stage 3,
+5 bonus stage, 6 stage 5, 7 stage 6, 8 stage 7. Its default name is
+out/robocop_md_scene<N>.md. It is for testing, not for playing the game through.
 """
+import os
 import sys
 import zipfile
 import zlib
@@ -72,8 +78,17 @@ def main(argv):
         sys.exit(f'Python package missing ({missing.name}): run  python3 -m pip install -r requirements.txt')
     import build
 
+    scene = None
+    if '--scene' in argv:
+        at = argv.index('--scene')
+        if at + 1 >= len(argv) or not argv[at + 1].isdigit() or not 0 <= int(argv[at + 1]) <= 8:
+            sys.exit('--scene takes a number from 0 to 8')
+        scene = int(argv[at + 1])
+        argv = argv[:at] + argv[at + 2:]
+        os.environ['BOOT_SCENE'] = str(scene)
     source = Path(argv[1])
-    out = Path(argv[2]) if len(argv) > 2 else ROOT / 'out' / 'robocop_md.md'
+    name = 'robocop_md.md' if scene is None else f'robocop_md_scene{scene}.md'
+    out = Path(argv[2]) if len(argv) > 2 else ROOT / 'out' / name
     if not source.exists():
         sys.exit(f'{source} not found')
     data = load(reader(source))
@@ -85,7 +100,7 @@ def main(argv):
     tiles2 = b''.join(data[name] for name, _ in TILES2)
     chars = b''.join(data[name] for name, _ in CHARS)
     build.build(program, bytes(sprites), tiles1, tiles2, chars, data[SOUND[0]], data[SAMPLES[0]], out)
-    print(f'\nDone: {out}')
+    print(f'\nDone: {out}' + ('' if scene is None else f'  (test ROM: starts by itself in scene {scene})'))
 
 
 if __name__ == '__main__':

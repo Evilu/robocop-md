@@ -77,7 +77,7 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 - The console's RAM `0xFF0000–0xFF7FFF` and `0xFFC800–0xFFFFFF` (46 KB) is never addressed by the game. The arcade's memory-mapped tables total about 31 KB.
 - A whole arcade frame is at most about 800 patterns in stage 1: it fits in VRAM twice. Sprites per line and palettes are what do not fit.
 - RoboCop MD (the demo) is a from-scratch SGDK program with no arcade code. It is the reference for picture mode, layer mapping, palettes and sprite budget, not for code. Its recipe: H32, street on plane A, skyline on plane B, both low priority with one palette line each, all sprites high priority, HUD drawn with sprites, no window, no raster effects.
-- `BOOT_SCENE=n` in the environment of the build makes a test ROM that presses coin and start itself and starts in scene n (for ares, which takes no input). Without it the hardware layer is unchanged. MAME save states of the Mega Drive build go stale with every rebuild.
+- `--scene n` on the build (or `BOOT_SCENE=n` in its environment) makes a test ROM that presses coin and start itself and starts in scene n (for ares, which takes no input). Without it the hardware layer is unchanged. MAME save states of the Mega Drive build go stale with every rebuild.
 - Name built ROMs `.md`: emulators pick the system from the extension.
 
 **The build**
