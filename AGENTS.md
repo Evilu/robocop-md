@@ -23,6 +23,7 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 | `docs/` | Research documents and the port plan |
 | `src/hal.s` | The Mega Drive hardware layer: boot, VBlank, pad, and the HuC6280's two jobs (GNU as, Motorola operand syntax, `\|` comments) |
 | `src/sprites.s` | Sprite RAM to Mega Drive sprites: pieces, VRAM pattern cache, palette lines, the flush at VBlank |
+| `src/bg.s` | Tile layers 2 and 3 on planes A and B: change detection, window, tile cache, pixel renumbering onto palette lines 2 and 3 |
 | `build_md.py` | Builds the Mega Drive ROM from the user's `robocop.zip` (calls `tools/build/build.py`) |
 | `test/roms/md/` (ignored) | Built ROMs for the user to try |
 | `tools/prep_roms.py` | Builds flat program and graphics images, and a MAME-ready ROM folder, from the user's sets |
@@ -80,7 +81,13 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 - The stand-in for the VBlank flag (bit 7 of `0xFF0863`) must read 0, or the arcade's VBlank handler never returns. DIP switches read `0xFF7F`.
 - **The build cannot be compared with the arcade step for step.** The game's random numbers come from a counter the frame wait loop spins (`0xFF8008`), so they depend on timing. Compare statistics, or one routine at a time on captured inputs, as `hit_capture.lua` and `hit_model.py` do for the hit detection.
 - Take hardware-layer addresses from the linker's symbol table.
-- **VRAM layout (H32):** patterns `0x000–0x1FF` free for the planes, sprite cache `0x200–0x5BF` (120 slots of 8), sprite table `0xB800`, hscroll `0xBC00`, plane A `0xC000`, plane B `0xE000`.
+- **VRAM layout (H32, planes 64×64):** tile cache patterns `0x004–0x33F` (207 slots of 4), sprite cache `0x340–0x5BF` (80 slots of 8), sprite table `0xB800`, hscroll `0xBC00`, plane A `0xC000`, plane B `0xE000`. Nothing is left for the text layer yet.
+- **Palette lines:** sprites 0 and 1, layer 2 on line 2, layer 3 on line 3 with colour 0 of line 3 as the backdrop (layer 3's pen 0 is a real colour on the arcade).
+- **Do not draw the whole arcade map.** Its off-screen part holds stale columns, and all of it together needs more distinct tiles than VRAM has. `bg.s` keeps a 19 × 17 tile window.
+- **Hardware layer RAM is nearly full.** Free: `0xFF0E40–0xFF0FFF` and `0xFFD740–0xFFD7FF`. Check a new table against the map in `docs/04-port-plan.md`; `bg.s` once put two variables on top of a palette line.
+- **The game queues palette changes** in `0xFF8DCA` and `0xFFB530` and applies them in its VBlank handler. The hardware layer watches those two instead of checksumming the palette every step (which cost 17,000 cycles).
+- Comparing all 1,024 entries of a tile map costs about 22,000 cycles. One layer is compared per step.
+- The ROM now holds graphics at `0x180000–0x180FFF`, the arcade's dual-port RAM address: `md_state.lua` ignores accesses made by the hardware layer itself (PC from `0x040000`).
 - **Sprite tiles are stored twice in the ROM**: singly at `0x080000` (128 bytes each) and as vertical pairs at `0x100000` (256 bytes per pair), because a 16×32 Mega Drive sprite needs its eight patterns in one run, column by column. Cache keys are the tile code for singles and 3072 + pair number for pairs.
 - **The sprite table is built at the latch and sent at the next VBlank**, one frame later, with the patterns it needs. Anything else drawn from the same game step should be sent at that VBlank too.
 - Sprite table entry 0 is an off-screen dummy heading the chain; real pieces are linked last to first because the arcade's last entry is on top.
