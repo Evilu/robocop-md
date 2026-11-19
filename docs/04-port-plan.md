@@ -2,7 +2,7 @@
 
 How *RoboCop* gets from the arcade board to a Mega Drive cartridge, in milestones. It builds on the measurements in [doc 01](01-architecture-dec0-vs-mega-drive.md), [doc 02](02-robocop-arcade-vs-md-demo.md) and [doc 03](03-robocop-measured.md).
 
-**Status: milestones 1 to 3 are done in emulators, stage 1 only.** The arcade program boots and plays on the Mega Drive with sprites, both scrolling layers and the text layer; checked in MAME and, for the picture, in ares. There is no sound. Each milestone lists what has to be true before it counts as done.
+**Status: milestones 1 to 4 have a first version, in emulators, stage 1 only.** The arcade program boots and plays on the Mega Drive with sprites, both scrolling layers, the text layer, music, effects and samples. The picture is checked in MAME and ares; the sound only in MAME, by measurement, and nobody has listened to it yet. Each milestone lists what has to be true before it counts as done.
 
 ## Decisions
 
@@ -38,7 +38,7 @@ flowchart LR
 2. **Redirects pointers held in data**: 228 long values in the tilemap, palette and `0x242800` ranges that follow a routine's `rts`, sit in a run of such pointers, or follow a list terminator (the text printer's lists are `pointer, characters..., 0xFFFE, pointer, ...`). Values in the dual-port RAM's and the registers' ranges are never treated as data pointers: `0x0018` and `0x0024` followed by a small number are common in word tables.
 3. **Replaces the vector table and the header page.** Reset and VBlank (level 6) go to the hardware layer, which calls Data East's handler after reading the pad.
 4. **Replaces the exchanges with the HuC6280** (below).
-5. **Appends** the hardware layer after the program at `0x040000`, tables of blank tiles and characters at `0x070000`, and the graphics converted to Mega Drive patterns: sprite tiles at `0x080000` and `0x100000`, layer tiles at `0x180000`, characters at `0x1E0000`. The ROM is 2 MB, flat.
+5. **Appends** the hardware layer after the program at `0x040000`, tables of blank tiles and characters at `0x070000`, and the graphics converted to Mega Drive patterns: sprite tiles at `0x080000` and `0x100000`, layer tiles at `0x180000`, characters at `0x1E0000`; then the sound: a table of streams at `0x200000`, the streams, the sample table and Z80 program at `0x27F000`, and the samples at `0x280000`. The ROM is 4 MB, flat.
 
 About 210 values in hardware ranges are left alone as coincidences. The check for a missed one is dynamic: `tools/mame/md_state.lua` records every access the running build makes to an arcade hardware address, which on the Mega Drive is cartridge space. In 9,000 frames of play through stage 1 and into stage 2 there were none.
 
@@ -86,6 +86,7 @@ So the model equals the HuC6280 on everything the arcade run produced, and the 6
 | Layer 3 scroll tables `0x24C800–0x24CFFF`, and `0x24E000–0x24E7FF` where the game's VBlank handler writes them | `0xFFC800–0xFFCFFF` |
 | Hardware layer, sprites | Variables `0xFFD000`, sprite table copy `0xFFD100`, upload queue `0xFFD300`, cache slot tables `0xFFD500–0xFFD6EF`, converted palettes `0xFFD700`, slot-of-key table `0xFFE000–0xFFF1FF`, palette use counts `0xFF1600` |
 | Hardware layer, tile layers | Slot tables `0xFF0880–0xFF0BBD`, layer records `0xFF0C40`, drawn bits `0xFF0C80–0xFF0D7F`, colour owners `0xFF0D80`, lines 2 and 3 `0xFF0DC0`, variables `0xFF0E00`, full arcade colours `0xFF1240`, colour selection work area `0xFF1300–0xFF15FF`, drawn map copies `0xFFD800–0xFFDFFF` and `0xFFF200–0xFFF9FF`, hash table `0xFFFA00–0xFFFDFF`, pen tables `0xFFFE00–0xFFFFFF` |
+| Hardware layer, sound | Command queue and the two streams' positions `0xFF1620–0xFF165B` |
 | Hardware layer, text | Block checksums and slots `0xFF0E40–0xFF0FCB`, variables `0xFF1040`, character cache keys `0xFF1100–0xFF123F`, pen tables `0xFFD740–0xFFD7FF` |
 
 The dual-port RAM's stand-in is 4 KB, but with the record copies gone the game only touches its first 36 bytes; the hardware layer uses `0xFF1040–0xFF1FFF` of it. If a later stage turns out to use the dual-port RAM as plain storage, those tables have to move.
@@ -178,12 +179,48 @@ Known faults:
 - The text layer's row scroll, used in 3% of gameplay frames, is ignored.
 - Sprites over 16 on a line vanish instead of flickering.
 
-### 4. Sound
+### 4. Sound — first version (MAME only, not yet listened to)
 
-- Sound commands captured at `0x19C6` and the coin handler.
-- Samples: the 17 ADPCM samples decoded at build time, played by a Z80 PCM driver.
-- Music: read the sequence format out of the 6502 program, then convert: YM2203 channels to YM2612 channels, YM3812 voices arranged onto the rest, square waves to the PSG.
-- **Done when** every command the game sends in a full playthrough produces the right sound.
+The arcade's 6502 sound program is not run on the console. **It is run at build time**: `tools/build/sound6502.py` is an emulator of the sound board (65C02, the YM3812's timer as its interrupt, the sound latch as NMI, the OKI's busy flags), and each sound command is played alone in it while its chip writes are logged. `tools/build/sound.py` turns each log into a stream of YM2612 and PSG writes per frame. The build keeps the result in a `cache` folder beside the ROM, because the emulation takes about two and a half minutes.
+
+The emulator against MAME, on the first 40 seconds of MAME's own log of the game: the same 178 OKI writes, 7,197 YM2203 writes against 7,188 and 4,490 YM3812 writes against 4,404, in slightly different order where cycle timing decides which of two channels is written first.
+
+**What the commands are** (each run alone, `tools/analysis/sound_survey.py`):
+
+| Commands | What | Chips on the arcade |
+|---|---|---|
+| `0x01`–`0x04` | Stop and reset | — |
+| `0x05`–`0x30` | 44 effects | One YM2203 FM channel each, a few with a square-wave channel |
+| `0x31`–`0x3D` | 13 tunes: ten that repeat (7 to 108 seconds) and three played once | YM3812, up to nine voices; five tunes add YM2203 FM voices |
+| `0x3E`–`0x4F` | Stop samples; 17 samples | OKI M6295 |
+
+**Conversion.**
+
+- **YM3812 voice → two YM2612 operators.** The game uses the YM3812 as plain two-operator FM: no waveform select, no rhythm mode (register log). Multiple, level, attack, decay, sustain and release map across; a percussive envelope becomes a second decay; feedback carries over. Frequencies are rescaled for the two chips' sample rates (× 1.564).
+- **YM2203 FM voice → one YM2612 channel**, register for register, frequency × 0.391.
+- **Square waves → PSG**, period × 4.77, volume in 2 dB steps; envelope mode is taken as a fixed level and noise as white noise.
+- **Places.** Tunes have channels 1, 2 and 4 whole and channel 3 in its separate-frequency mode as two two-operator voices: five places for up to nine voices. A voice keeps its place from note to note; a new one takes a free place, or the place of the voice released longest ago, or failing that the one keyed longest ago. Between a third and a half of all notes take a place that way.
+- **Effects** have channel 5 and the PSG; a new effect replaces the one playing.
+- **Repeats** are found in the write log itself: the last 400 writes are looked for earlier in the log and the match extended backwards. The driver's memory never returns to an earlier state (it keeps a free-running counter).
+- **Samples** are decoded from the OKI's ADPCM to 8-bit PCM at build time (125 KB) and played by the Z80 through the DAC on channel 6, one at a time, at about 7,600 a second (the arcade's 7,575). The Z80's program is 100 bytes, assembled by `sound.py`.
+
+**On the console** (`src/sound.s`). The five places where the game writes a sound command call `hal_sound`, which queues it. Each VBlank the 68000 takes the bus from the Z80, starts streams and samples for the queued commands, plays this frame's writes of the tune and effect streams, leaves the YM2612's address port on the DAC register and gives the bus back.
+
+Checked in MAME:
+
+- The pitch content of the port's audio against the arcade's over the same attract-mode music (`tools/analysis/compare_audio.py`, chroma per tenth of a second): agreement 0.64 with the port unshifted, 0.19 to 0.47 shifted by any number of semitones. The notes are the right ones at the right time.
+- The Z80 plays samples when the game asks: 13 to 28 samples started per ten seconds of play, each followed by its bank switch and its bytes written to the DAC. The playback rate itself is from counting the routine's cycles, not from a measurement.
+- No clipping; game speed and stray accesses unchanged.
+
+Not checked, and likely wrong in places:
+
+- **Nobody has listened to it.** Timbres come from a mechanical mapping of envelope rates and levels between two different chip families; instrument balance, attack and decay speeds and modulation depth are untested by ear.
+- Voices dropped by the five-place limit: which ones are missed has not been judged.
+- A note held across a tune's repeat point may hang or cut.
+- Only one sample plays at a time (the arcade has four voices), and the DAC pauses while the 68000 holds the bus each frame.
+- Effects take one FM channel: the two effects that use two lose one.
+- Vibrato and tremolo are ignored.
+- Sound has not been run in ares beyond confirming the build still boots there.
 
 ### 5. Whole game
 
@@ -200,6 +237,7 @@ Known faults:
 
 - **Sprites per line and per frame** in H32 against the arcade's crowds plus a sprite HUD (doc 03, section 2).
 - **Colour**: 13 street colours, two sprite lines.
+- **Sound by ear**: the conversion is mechanical and unheard.
 - **CPU time**: stage 1 runs 6% slow; comparing a tile map each update and renumbering tile pixels are the main costs left.
 - **The music arrangement**: twelve FM voices on two chip types into six.
 - **Everything after stage 1** is unmeasured.

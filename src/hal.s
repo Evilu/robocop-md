@@ -79,8 +79,8 @@ hal_boot:
     clr.w   bg_loading
     bsr.w   text_init
 
+    bsr.w   sound_init
     moveq   #0, d7
-    move.b  #1, IO + 0x15
     jsr     0x2516
     move.w  #0x8174, VDP_CTRL
     move.w  #0x2500, sr
@@ -111,6 +111,7 @@ hal_vblank:
     bsr.w   sprites_flush
     bsr.w   bg_scroll
     bsr.w   hal_idle
+    bsr.w   sound_frame
     addq.l  #1, hal_frames
     bsr.w   read_pad
     tst.w   0xff8dca
@@ -318,6 +319,7 @@ read_pad:
     .include "sprites.s"
     .include "bg.s"
     .include "text.s"
+    .include "sound.s"
 
 hal_crash:
     move.w  #0x2700, sr

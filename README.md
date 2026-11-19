@@ -4,7 +4,7 @@ A port of Data East's 1988 arcade game *RoboCop* to the Sega Mega Drive / Genesi
 
 The plan is the one used for [Cadillacs and Dinosaurs MD](https://github.com/Evilu/cadillacs-and-dinosaurs-md): the Mega Drive runs Data East's own 68000 program, and only the hardware layer underneath it is replaced (video, palettes, input, sound, the protection processor, memory map). The goal is the whole game, as close to the arcade as the console allows.
 
-**Status: stage 1 plays in emulators with sprites, backgrounds and the HUD; there is no sound yet.** The game boots, shows its attract sequence, takes a coin and plays stage 1 and into stage 2, and enemies hit the player through our replacement for the board's protection processor. Checked in MAME and ares. Later stages have not been played.
+**Status: stage 1 plays in emulators with sprites, backgrounds, the HUD, music, effects and samples.** The game boots, shows its attract sequence, takes a coin and plays stage 1 and into stage 2, and enemies hit the player through our replacement for the board's protection processor. The picture is checked in MAME and ares. The sound is a first version, checked by measurement in MAME only. Later stages have not been played.
 
 What the research found, in short:
 
@@ -19,7 +19,7 @@ This repository contains no ROM data. To build, you supply your own dump of the 
 
 ## What you need
 
-- **Your own dump of the arcade game:** MAME's `robocop` set (*Robocop*, World, revision 4), as `robocop.zip` or as a folder of its files. The build checks the four program ROMs and the eighteen graphics ROMs by CRC32 and tells you which one is missing or wrong. Other revisions and regions (`robocopw`, `robocopj`, `robocopu`, the bootlegs) are not supported.
+- **Your own dump of the arcade game:** MAME's `robocop` set (*Robocop*, World, revision 4), as `robocop.zip` or as a folder of its files. The build checks the four program ROMs, the eighteen graphics ROMs, the sound program and the sample ROM by CRC32 and tells you which one is missing or wrong. Other revisions and regions (`robocopw`, `robocopj`, `robocopu`, the bootlegs) are not supported.
 - **Python 3.9 or newer**, with `capstone` (`requirements.txt`).
 - **GNU binutils for the 68000** (`as`, `ld`, `objcopy`, `nm`):
   - macOS: `brew install m68k-elf-binutils`
@@ -36,7 +36,7 @@ python3 -m venv .venv
 .venv/bin/python3 build_md.py /path/to/robocop.zip
 ```
 
-The ROM is written to `out/robocop_md.md` (2 MB, no mapper); a second argument chooses another path. The built ROM contains Data East's program and graphics: do not share it.
+The ROM is written to `out/robocop_md.md` (4 MB, no mapper); a second argument chooses another path. The first build takes about three minutes, most of it converting the sound; the result is kept in `out/cache` and later builds take seconds. The built ROM contains Data East's program, graphics and sound: do not share it.
 
 Pad: **A** inserts a coin, **Start** starts, **B** attacks, **C** jumps. Run in MAME and ares (in ares, map the Mega Drive pad first: it has no default mapping). Do not try it on a real console yet.
 
@@ -44,8 +44,12 @@ Pad: **A** inserts a coin, **Start** starts, **B** attacks, **C** jumps. Run in 
 
 Everything here was seen in MAME or ares in the attract sequence, stage 1 and the first screens of stage 2. Nothing else has been played.
 
+**Sound**
+- First version, converted mechanically from the arcade's three sound chips: the notes are right, but instruments and balance have not been tuned by ear.
+- The music has five voices where the arcade has up to nine; some notes are dropped.
+- One sample at a time.
+
 **Missing**
-- No sound or music.
 - Only one player has been tried.
 
 **Speed**

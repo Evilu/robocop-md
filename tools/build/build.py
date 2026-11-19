@@ -1,18 +1,22 @@
 """Build the Mega Drive ROM from the arcade program image.
 
-usage: build.py <robocop_prg.bin> <robocop_sprites.bin> <robocop_tiles1.bin> <robocop_tiles2.bin> <robocop_char.bin> <out.md>
+usage: build.py <robocop_prg.bin> <robocop_sprites.bin> <robocop_tiles1.bin> <robocop_tiles2.bin> <robocop_char.bin>
+       <robocop_snd.bin> <robocop_oki.bin> <out.md>
 
 Takes the 256 KB arcade 68000 program, redirects its hardware addresses to
 copies in work RAM, replaces the vectors and the header page, replaces the
 exchanges with the HuC6280, and appends the hardware layer assembled from src/.
 """
 import os
+import pickle
 import struct
 import subprocess
 import sys
 import tempfile
+import zlib
 
 import gfx
+import sound
 from pathlib import Path
 
 from capstone import CS_ARCH_M68K, CS_MODE_BIG_ENDIAN, CS_MODE_M68K_000, Cs
@@ -21,7 +25,10 @@ ROOT = Path(__file__).resolve().parents[2]
 PREFIX = os.environ.get('M68K_PREFIX', 'm68k-elf-')
 PRG_SIZE = 0x40000
 HAL_BASE = 0x40000
-ROM_SIZE = 0x200000
+ROM_SIZE = 0x400000
+SOUND_TABLE = 0x200000
+SAMPLE_TABLE = 0x27f000
+PCM = 0x280000
 GFX_SINGLE = 0x080000
 GFX_PAIR = 0x100000
 SPRITE_TILES = 3072
@@ -68,7 +75,7 @@ def assemble():
         subprocess.run([PREFIX + 'as', '-m68000', '--register-prefix-optional', '-I', str(ROOT / 'src'),
                         '--defsym', f'GFX_SINGLE={GFX_SINGLE}', '--defsym', f'GFX_PAIR={GFX_PAIR}',
                         '--defsym', f'SPRITE_TILES={SPRITE_TILES}',
-                        '--defsym', f'GFX_TILES={GFX_TILES}', '--defsym', f'GFX_BLANK={GFX_BLANK}', '--defsym', f'GFX_CHARS={GFX_CHARS}',
+                        '--defsym', f'GFX_TILES={GFX_TILES}', '--defsym', f'GFX_BLANK={GFX_BLANK}', '--defsym', f'GFX_CHARS={GFX_CHARS}', '--defsym', f'SOUND_TABLE={SOUND_TABLE}', '--defsym', f'SAMPLE_TABLE={SAMPLE_TABLE}',
                         str(ROOT / 'src' / 'hal.s'), '-o', str(obj)], check=True)
         subprocess.run([PREFIX + 'ld', '-Ttext', hex(HAL_BASE), '-e', hex(HAL_BASE), '-o', str(elf), str(obj)],
                        check=True)
@@ -101,7 +108,22 @@ def expect(rom, off, data):
         sys.exit(f'{off:06x}: expected {data.hex()}, found {found.hex()}: not the robocop revision 4 program')
 
 
-def build(program, sprites, tiles1, tiles2, chars, out_path):
+def sound_streams(sound_program, samples, cache):
+    """Running the 6502 program for every tune takes a few minutes; the result is kept beside the ROM."""
+    sources = b''.join((ROOT / 'tools' / 'build' / name).read_bytes() for name in ('sound.py', 'sound6502.py'))
+    key = f'{zlib.crc32(sound_program + samples + sources):08x}'
+    file = cache / f'sound_{key}.pickle'
+    if file.exists():
+        return pickle.loads(file.read_bytes())
+    print('converting the sound (a few minutes, once) ...', flush=True)
+    report = []
+    streams = sound.build(sound_program, samples, report)
+    cache.mkdir(parents=True, exist_ok=True)
+    file.write_bytes(pickle.dumps((streams, report)))
+    return streams, report
+
+
+def build(program, sprites, tiles1, tiles2, chars, sound_program, samples, out_path):
     if len(program) != PRG_SIZE:
         sys.exit('expected the 256 KB robocop program image')
     rom = bytearray(program)
@@ -123,6 +145,10 @@ def build(program, sprites, tiles1, tiles2, chars, out_path):
           'HuC6280 interrupt replaced by a call to the hit detection')
     for site in (0x1010, 0x1b86):
         patch(site, bytes.fromhex('33c00030c012'), call('hal_sprites'), 'sprite latch: translate the sprite list')
+    patch(0x19c6, bytes.fromhex('33c00030c014'), call('hal_sound'), 'sound command sent to the hardware layer')
+    for site, value in ((0x1362, 0x05), (0x1498, 0x01), (0x14b8, 0x04), (0x14d8, 0xc0)):
+        patch(site, bytes.fromhex(f'33fc{value:04x}0030c014'), call(f'hal_sound_{value:02x}') + b'\x4e\x71',
+              f'fixed sound command {value:02x} sent to the hardware layer')
     patch(0x761c, bytes.fromhex('3e3c04af'), bytes.fromhex('600a4e71'), 'object records no longer copied to the dual-port RAM')
     patch(0x767c, bytes.fromhex('3e3c04af'), bytes.fromhex('4e754e71'), 'object records no longer copied back')
     patch(TRAMPOLINE, bytes(rom[TRAMPOLINE:TRAMPOLINE + 6]), jump('hal_restart'), 'restart trampoline')
@@ -212,6 +238,27 @@ def build(program, sprites, tiles1, tiles2, chars, out_path):
     rom += b'\xff' * (GFX_CHARS - len(rom)) + text
     report.append(f'tile patterns: {len(layer2) + len(layer3)} bytes at {GFX_TILES:06x}; '
                   f'characters: {len(text)} bytes at {GFX_CHARS:06x}')
+    streams, sound_report = sound_streams(sound_program, samples, Path(out_path).parent / 'cache')
+    table = bytearray(1024)
+    data = bytearray()
+    for value, stream in sorted(streams.items()):
+        struct.pack_into('>I', table, value * 4, SOUND_TABLE + 1024 + len(data))
+        data += stream
+    rom += b'\xff' * (SOUND_TABLE - len(rom)) + table + data
+    pcm = sound.samples(samples)
+    sample_table, at = bytearray(32 * 8), PCM
+    for n, wave in sorted(pcm.items()):
+        if n < 32:
+            struct.pack_into('>IH', sample_table, n * 8, at, len(wave))
+        at += len(wave)
+    driver = sound.z80_driver()
+    rom += b'\xff' * (SAMPLE_TABLE - len(rom)) + sample_table + struct.pack('>H', len(driver)) + driver
+    rom += b'\xff' * (PCM - len(rom)) + b''.join(wave for _, wave in sorted(pcm.items()))
+    report.append(f'samples: {len(pcm)}, {at - PCM} bytes of 8-bit PCM at {PCM:06x}; Z80 driver {len(driver)} bytes')
+    report += sound_report
+    report.append(f'sound: {len(streams)} streams, {len(data)} bytes at {SOUND_TABLE + 1024:06x}')
+    if len(rom) > ROM_SIZE:
+        sys.exit('sound does not fit')
     rom += b'\xff' * (ROM_SIZE - len(rom))
     checksum = sum(struct.unpack_from(f'>{(len(rom) - 0x200) // 2}H', rom, 0x200)) & 0xffff
     struct.pack_into('>H', rom, 0x18e, checksum)
@@ -225,4 +272,4 @@ def build(program, sprites, tiles1, tiles2, chars, out_path):
 
 
 if __name__ == '__main__':
-    build(*(Path(a).read_bytes() for a in sys.argv[1:6]), sys.argv[6])
+    build(*(Path(a).read_bytes() for a in sys.argv[1:8]), sys.argv[8])

@@ -120,3 +120,22 @@ tools/check_ares.sh test/roms/md/robocop_md.md analysis/mame/ares_check 16 3
 ```
 
 Opens ares with the ROM, captures only its window (16 times, 3 seconds apart here), closes the ares it started and writes `ares_sheet.png` in the output folder. ares is stricter than MAME about the VDP and is the last check before a change is called done. It takes no scripted input, so it shows the attract sequence, which ends in a gameplay demo. `ARES` names the binary (default `~/Downloads/ares-v148/ares.app/Contents/MacOS/ares`); the terminal needs macOS screen recording permission.
+
+## 10. Sound
+
+```sh
+python3 -I tools/analysis/sound_survey.py analysis/work/robocop_snd.bin analysis/work/robocop_oki.bin
+analysis/venv/bin/python3 -I tools/build/sound.py analysis/work/robocop_snd.bin analysis/work/robocop_oki.bin --lengths
+analysis/venv/bin/python3 -I tools/build/sound.py analysis/work/robocop_snd.bin analysis/work/robocop_oki.bin --convert
+```
+
+| Script | Does |
+|---|---|
+| `build/sound6502.py` | Emulates the arcade sound board and logs its chip writes. Given a command log from MAME it replays the same commands and writes a log in the same format, to compare |
+| `analysis/sound_survey.py` | Runs each of the 256 commands alone and lists the voices it uses and whether it keeps going |
+| `build/sound.py` | `--lengths`: each tune's length and where it repeats. `--convert`: converts every tune and effect and reports stream sizes and how many notes had to take another voice's place |
+| `mame/dec0_sound_log.lua` | Logs every sound chip write and sound command on the arcade, with times (`sound_log.csv`) |
+| `mame/dec0_sound.lua` | Counts chip register writes, key-ons per channel and samples per voice |
+| `analysis/compare_audio.py` | Compares the pitch content of two recordings made with MAME's `-wavwrite`: best lag, chroma agreement, and the same after shifting one by each number of semitones |
+
+To record: add `-wavwrite <file.wav>` to a MAME run of either machine (it works with `-sound none`). `compare_audio.py` needs numpy (in `analysis/venv`).

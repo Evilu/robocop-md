@@ -25,6 +25,8 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 | `src/sprites.s` | Sprite RAM to Mega Drive sprites: pieces, VRAM pattern cache, palette lines, the flush at VBlank |
 | `src/bg.s` | Tile layers 2 and 3 on planes A and B: change detection, window, tile cache, pixel renumbering onto palette lines 2 and 3 |
 | `src/text.s` | The text layer: on a free plane when a tile layer is blank, as sprite blocks in the stages; the display curtain |
+| `src/sound.s` | Sound command queue, the stream player in VBlank, the Z80 loader and bus sharing |
+| `tools/build/sound6502.py`, `sound.py` | Build-time emulator of the arcade sound board, and the converter from its chip writes to YM2612 and PSG streams, PCM samples and the Z80 program |
 | `build_md.py` | Builds the Mega Drive ROM from the user's `robocop.zip` (calls `tools/build/build.py`) |
 | `test/roms/md/` (ignored) | Built ROMs for the user to try |
 | `tools/prep_roms.py` | Builds flat program and graphics images, and a MAME-ready ROM folder, from the user's sets |
@@ -102,6 +104,17 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 - **The sprite table is built at the latch and sent at the next VBlank**, one frame later, with the patterns it needs. Anything else drawn from the same game step should be sent at that VBlank too.
 - Sprite table entry 0 is an off-screen dummy heading the chain; real pieces are linked last to first because the arcade's last entry is on top.
 - The arcade program never touches memory outside its own RAM and hardware (checked with read and write taps over 7,200 frames), so `0xFF0000–0xFF7FFF` and `0xFFC800–0xFFFFFF` are the hardware layer's.
+
+**Sound**
+
+- Commands: `0x01`–`0x04` stop and reset, `0x05`–`0x30` effects (YM2203), `0x31`–`0x3D` tunes (YM3812, some with YM2203 voices), `0x3E` stop samples, `0x3F`–`0x4F` samples. The game sends them from five places (`0x19C6` and four fixed ones in the coin code).
+- **The 6502 sound program is run at build time, not on the console.** Its tick is the YM3812's timer 1, free-running at 1.152 ms (value 244 at a 3 MHz clock): the handler's write that "starts" the timer each tick does not restart it. Modelling a restart made the music 13% slow.
+- The driver's RAM never returns to an earlier state (a 16-bit tick counter), so a tune's repeat is found in its write log, not its memory.
+- The YM3812 is used as plain two-operator FM (no waveform select, no rhythm mode) and runs at 3 MHz, the YM2203 at 1.5 MHz: sample rates 41,667 Hz and 20,833 Hz against the YM2612's 53,267 Hz.
+- **Loading the Z80:** copy the program with the bus held and reset released, then assert reset, release the bus, release reset. Copying while reset was asserted left the Z80 running garbage in MAME.
+- The Z80 and the 68000 both write the YM2612. The 68000 takes the bus for its writes and leaves the address port on `0x2A` before giving it back, so a sample byte the Z80 was about to write still lands in the DAC.
+- The sound conversion takes about two and a half minutes and is cached beside the output ROM (`cache/`), keyed by the two ROMs and the two source files.
+- Audio can be measured, not heard: `-wavwrite` in MAME and `tools/analysis/compare_audio.py`. Say so when reporting; do not describe how it sounds.
 
 **Tooling**
 
