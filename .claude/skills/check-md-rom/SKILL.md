@@ -29,6 +29,13 @@ Opens ares with the ROM, captures only the ares window every few seconds, closes
 
 ares takes no scripted input and its pad is not mapped here, so it shows what the ROM does on its own: the attract sequence, including its gameplay demo. Allow about 40 seconds to see the whole sequence. Compare with the same sequence in MAME (`tools/check_md.sh` with no input) and with the arcade.
 
+Reading an ares sheet:
+
+- **All captures black and no `VPS` number in the window's status bar: ares is not running the picture**, not the ROM. Seen with the screen locked or asleep, and while the user was working in another application. Check by running the last ROM known to work. Captures need the screen unlocked and left alone for the whole run.
+- A stage in ares: `build_md.py robocop.zip <out> --scene N` makes a ROM that starts itself there. Allow 18 seconds for the story pages before the stage shows (`8 4` as captures and interval reaches it).
+- Order of work for a change: MAME headless on every iteration; then build every ROM that will be captured; then all the ares captures in one go; then read every sheet before saying it works.
+- When ares cannot be used, `analysis/gpgx/run_core <core.dylib> <rom> <frames> out.wav out.ppm` gives a last frame and the audio from Genesis Plus GX. Say in the report that ares is still owed.
+
 ## Inspect the picture
 
 ```sh
