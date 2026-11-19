@@ -68,7 +68,7 @@ bg_reset:
     clr.l   bg_line_used
     clr.w   bg_inexact
     move.w  #1, bg_line_dirty
-    move.w  #1, bg_pal_flag
+    move.w  #4, bg_pal_flag
     lea     BG_LINE, a0
     moveq   #31, d0
 1:  clr.w   (a0)+
@@ -644,7 +644,7 @@ bg_lut_next:
 bg_palette_check:
     tst.w   bg_pal_flag
     beq.w   bg_palette_same
-    clr.w   bg_pal_flag
+    subq.w  #1, bg_pal_flag
     lea     BG_PALETTES, a0
     lea     BG_BLUES, a1
     moveq   #0, d0

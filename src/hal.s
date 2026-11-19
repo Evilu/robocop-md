@@ -112,7 +112,7 @@ hal_vblank:
     bne.s   1f
     tst.l   0xffb530
     beq.s   2f
-1:  move.w  #1, bg_pal_flag
+1:  move.w  #4, bg_pal_flag
 2:  movem.l (sp)+, d0-d4/a0-a1
     jmp     0x1002
 
