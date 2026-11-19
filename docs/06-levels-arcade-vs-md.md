@@ -7,7 +7,7 @@ What this pass is and is not:
 - It is the opening screens of each stage. The script walks into the first obstacle in most of them. Bosses, the later parts of each stage, a second player and continues were not seen.
 - Pictures were compared by eye on the sheets; speed was counted from the game's step counter (`0xFF800A`).
 - Sound was not compared.
-- Nothing here has been fixed yet. This is the list to work from.
+- The first pass is below as it was found. What has been fixed since is in the last section, with what is still wrong.
 
 ## Summary
 
@@ -89,3 +89,41 @@ The hardware layer gives sprite palette lines 0 and 1 to the two palettes that c
 4. The ending and the stage-clear screen: text layer scroll, and blanking the stage behind a text screen.
 5. Scenery colours in the warehouse and the tower.
 6. Run `md_state.lua` on every scene for stray accesses, and the hit detection capture on at least one later stage.
+
+## Second pass: what was fixed, and what is left
+
+Build of 2026-11-20, same method. Checked in MAME on every scene from its save state, with the stage clear forced in each, and each self-starting scene ROM was run in Genesis Plus GX (headless, one frame looked at per scene). **The ares check of this build is still owed**: the captures came back black for every ROM, the old build included, because the Mac's screen was locked.
+
+**Fixed**
+
+- **The player's colours.** Sprite palette 0 is the player's in every scene. It now owns palette line 0 as it is. Every other sprite is recoloured, pen by pen, onto line 1, whose 15 colours are chosen from the palettes in use (or onto line 0 when that fits a palette better). On the arcade 4 to 7 sprite palettes are on screen at once with about 40 distinct colours between them, and the sprite palettes are loaded once per stage and never change.
+- **Barrels, cars and crates changing colour**: gone with the above; a line no longer changes owner from frame to frame.
+- **The bonus stage's speed**: 84 frames to a tick of its clock against the arcade's 72 (it was 131). The cause was not the load but its order: the game hands its sprite list to the VBlank handler through a flag, and skips its own logic for a frame whenever the handler finds the list late. With the list translated inside the handler, one frame in three ran late. The list is now translated while the game waits for the frame, and shown at most every second frame.
+- **Stage clear**: the screen goes black and shows `PLAYER 1 READY?`. A palette that stays black for eight updates gives the scene up, so the text can have a plane.
+- **Ending**: the picture is shown and the staff roll scrolls. The text follows the text layer's scroll register, on a plane or as sprites.
+- **Stray accesses**: none in any scene through a forced stage clear, and the game never writes into the hardware layer's RAM (taps on `0xFF0880–0xFF0FFF`, `0xFF1040–0xFF1FFF` and `0xFFD000` up).
+
+**Speed now** (game steps against the arcade's over 2,700 frames from each state; the runs differ in what the script meets, so a few points either way mean nothing):
+
+| Scene | Before | Now |
+|---|---|---|
+| 0 stage 1 | 91% | 93% |
+| 1 stage 2 | 92% | 92% |
+| 3 stage 4 | 81% | 82% |
+| 4 stage 3 | 92% | 94% |
+| 6 stage 5 | 84% | 65–75% |
+| 7 stage 6 | 92% | 92% |
+| 8 stage 7 | 97% | 99% |
+
+The plant is the slow one and got slower: the game's own work there is 127,000 cycles a step (profile of the build, `tools/mame/md_profile.lua`), half the console's budget before the hardware layer does anything, and recolouring sprite patterns costs about 8,000 cycles each.
+
+**Still wrong**
+
+- Sprites other than the player share 15 colours. Enemies are duller than on the arcade, and some take a red or grey cast until the palettes they share a line with settle (seen in stages 2, 3, 5 and 6).
+- A new sprite palette appearing costs a pause of a frame or two while line 1 is chosen again and the patterns on screen are recoloured.
+- HUD colours in the scrap yard (clock brown, power bar grey). Text over a stage still has two colours of its own; `CONTINUE?` and `GAME OVER` are hard to read over the plant and the tower.
+- Staff roll: lines are sometimes cut short for a moment as they scroll in (text blocks are redrawn four per update, twenty at most).
+- Scenery colours in the warehouse and the tower's upper floors.
+- The plant's speed.
+- Not looked at: bosses, anything past the first obstacle of each stage, the story pages in ares, sound.
+

@@ -146,6 +146,8 @@ def build(program, sprites, tiles1, tiles2, chars, sound_program, samples, out_p
           'HuC6280 interrupt replaced by a call to the hit detection')
     for site in (0x1010, 0x1b86):
         patch(site, bytes.fromhex('33c00030c012'), call('hal_sprites'), 'sprite latch: translate the sprite list')
+    for site in (0x17ba, 0x17e8):
+        patch(site, bytes.fromhex('527900ff8008'), call('hal_wait'), 'frame wait: the sprite list is translated while the game waits')
     patch(0x19c6, bytes.fromhex('33c00030c014'), call('hal_sound'), 'sound command sent to the hardware layer')
     for site, value in ((0x1362, 0x05), (0x1498, 0x01), (0x14b8, 0x04), (0x14d8, 0xc0)):
         patch(site, bytes.fromhex(f'33fc{value:04x}0030c014'), call(f'hal_sound_{value:02x}') + b'\x4e\x71',
@@ -268,6 +270,7 @@ def build(program, sprites, tiles1, tiles2, chars, sound_program, samples, out_p
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(rom)
+    out_path.with_suffix('.sym').write_text(''.join(f'{v:06x} {k}\n' for k, v in sorted(sym.items(), key=lambda kv: kv[1]) if HAL_BASE <= v < HAL_BASE + len(hal) and not k[0].isdigit() and not k.startswith('L')))
     report.append(f'hardware layer: {len(hal)} bytes at {HAL_BASE:06x}; ROM {len(rom)} bytes -> {out_path}')
     print('\n'.join(report))
     return skipped

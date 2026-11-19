@@ -48,6 +48,7 @@
     .equ bg_hold,       BG_VARS + 50    | a scene's palette has arrived: latches left before it is built regardless
     .equ bg_bad,        BG_VARS + 52    | the colour tables have gone wrong: latches left before a rebuild regardless
     .equ HOLD_LATCHES,  12
+    .equ DARK_TEARDOWN, 8    | updates with a black palette before the scene is given up (the text may then have a plane)
     .equ BG_KNOWN,      0xff1070    | per layer: the palettes whose pens have a line colour each, or all ones
     .equ bg_front,      BG_VARS + 62    | 0x8000 while the arcade draws some sprites behind layer 2
     .equ BG_SIGNATURE,  BG_VARS + 54    | per layer: palettes its map used and the map's checksum when its colours were chosen
@@ -165,7 +166,16 @@ bg_update:
 2:  bsr.w   bg_palette_check
     bsr.w   bg_palette_wait
     tst.w   bg_dark
+    beq.s   0f
+    cmpi.w  #DARK_TEARDOWN, bg_dark
+    bhs.w   5f
+    addq.w  #1, bg_dark
+    cmpi.w  #DARK_TEARDOWN, bg_dark
     bne.w   5f
+    bsr.w   bg_reset
+    clr.w   bg_loading
+    bra.w   5f
+0:
     tst.w   bg_hold
     bne.w   5f
     tst.w   bg_loading
@@ -210,16 +220,26 @@ bg_layer:
     movea.l LAYER_VALID(a5), a6
     move.w  LAYER_BIT(a5), d5
     move.w  LAYER_PLANE(a5), bg_plane
-    move.w  #1023, d7
-1:  cmpm.w  (a0)+, (a1)+
+    move.w  #511, d7
+1:  cmpm.l  (a0)+, (a1)+
     dbne    d7, 1b
     beq.s   2f
-    move.w  #1023, d6
-    sub.w   d7, d6
+    subq.l  #4, a0
+    subq.l  #4, a1
+    moveq   #1, d4
+7:  cmpm.w  (a0)+, (a1)+
+    beq.s   8f
+    move.l  a0, d6
+    sub.l   LAYER_MAP(a5), d6
+    lsr.w   #1, d6
+    subq.w  #1, d6
+    move.w  d4, -(sp)
     move.w  -2(a1), d0
     bsr.w   bg_release
+    move.w  (sp)+, d4
     move.w  -2(a0), -2(a1)
     move.w  #1, LAYER_REDRAW(a5)
+8:  dbra    d4, 7b
     dbra    d7, 1b
 2:  movea.l LAYER_MAP(a5), a0
     movea.l LAYER_DRAWN(a5), a1
@@ -1047,16 +1067,25 @@ bg_palette_check:
     move.w  #SETTLE_LATCHES, bg_settle
     tst.w   d3
     bne.s   1f
+    tst.w   bg_dark
+    bne.w   bg_palette_same
     move.w  #1, bg_dark
+    moveq   #0, d0
+    bsr.w   bg_line_refresh
+    moveq   #16, d0
+    bsr.w   bg_line_refresh
+    move.w  #1, bg_line_dirty
     rts
-1:  tst.w   bg_dark
+1:  move.w  bg_dark, d4
     beq.s   2f
     clr.w   bg_dark
     tst.w   bg_hold
     bne.w   bg_palette_same
+    cmpi.w  #DARK_TEARDOWN, d4
+    bhs.s   3f
     bsr.w   bg_scene_same
     beq.s   2f
-    move.w  #HOLD_LATCHES, bg_hold
+3:  move.w  #HOLD_LATCHES, bg_hold
     rts
 2:  tst.w   bg_hold
     bne.w   bg_palette_same
@@ -1191,25 +1220,27 @@ bg_scroll:
     neg.w   d0
     cmpi.w  #0xc000, text_plane
     bne.s   1f
-    moveq   #0, d0
+    move.w  PF1_REGS + 0x10, d0
+    neg.w   d0
 1:  move.w  d0, VDP_DATA
     move.w  PF3_REGS + 0x10, d0
     neg.w   d0
     cmpi.w  #0xe000, text_plane
     bne.s   2f
-    moveq   #0, d0
+    move.w  PF1_REGS + 0x10, d0
+    neg.w   d0
 2:  move.w  d0, VDP_DATA
     move.l  #0x40000010, VDP_CTRL
     move.w  PF2_REGS + 0x12, d0
     cmpi.w  #0xc000, text_plane
     bne.s   3f
-    moveq   #0, d0
+    move.w  PF1_REGS + 0x12, d0
 3:  addi.w  #TOP_LINE, d0
     move.w  d0, VDP_DATA
     move.w  PF3_REGS + 0x12, d0
     cmpi.w  #0xe000, text_plane
     bne.s   4f
-    moveq   #0, d0
+    move.w  PF1_REGS + 0x12, d0
 4:  addi.w  #TOP_LINE, d0
     move.w  d0, VDP_DATA
     rts

@@ -42,7 +42,7 @@ Pad: **A** inserts a coin, **Start** starts, **B** attacks, **C** jumps. Run in 
 
 ## Known issues
 
-Everything here was seen in MAME or ares in the attract sequence, stage 1 and the first screens of stage 2. The other stages have been loaded and looked at once; their faults (wrong sprite colours first among them, a half-speed bonus stage, a broken ending) are listed in [docs/06](docs/06-levels-arcade-vs-md.md).
+Everything here was seen in MAME or ares in the attract sequence, stage 1 and the first screens of stage 2. Every stage, the bonus stage and the ending have been loaded and compared with the arcade; what was found, what has been fixed and what is left is in [docs/06](docs/06-levels-arcade-vs-md.md).
 
 **Sound**
 - First version, converted mechanically from the arcade's three sound chips: the notes are right, but instruments and balance have not been tuned by ear.
@@ -53,12 +53,12 @@ Everything here was seen in MAME or ares in the attract sequence, stage 1 and th
 - Only one player has been tried.
 
 **Speed**
-- Stage 1 runs about 6% slower than the arcade, more in the boss fight.
+- Stages run at 82% to 99% of the arcade's speed; stage 5 at about 70%.
 - A scene change blanks the screen for a fraction of a second while the new scene is drawn.
 
 **Colours**
 - The street is drawn with 13 colours where the arcade has 40: close shades merge.
-- Sprites have two palette lines. A third sprite palette on screen borrows the closer of the two, so some enemies and effects are off-colour.
+- The player has a palette line to himself; every other sprite shares 15 colours chosen from those in use, so enemies and effects are duller than on the arcade and sometimes off-colour.
 - In-game text shares the street's colours and two of its own.
 
 **Graphics**
