@@ -1,6 +1,6 @@
 ---
 name: check-md-rom
-description: Run a Mega Drive ROM headless and check that it boots, what it draws and how it uses the VDP (DMA per frame, sprites, palettes, VRAM layout). Use after building the port's ROM, when asked whether a build works, or to inspect any Mega Drive ROM such as the RoboCop MD demo.
+description: Run a Mega Drive ROM headless in MAME and check that it boots, what it draws and how it uses the VDP (DMA per frame, sprites, palettes, VRAM layout), then confirm the picture in ares with a screen capture before calling a change finished. Use after building the port's ROM, when asked whether a build works, or to inspect any Mega Drive ROM such as the RoboCop MD demo.
 ---
 
 # Check a Mega Drive ROM
@@ -18,6 +18,16 @@ Runs the ROM in MAME's `genesis` driver with no window and no input, then prints
 - the largest per-frame VRAM DMA and the worst sprite-limit overflow
 
 Snapshots (`genesis/*.png`), VDP dumps (`vdp_*.bin`) and the per-frame trace (`md_frames.csv`) are in the output folder. **Look at the snapshots**: "running" only means the CPU is executing, not that the picture is right.
+
+## Before calling a change finished: ares
+
+```sh
+tools/check_ares.sh <rom.md> <out dir> [captures=8] [seconds between=5]
+```
+
+Opens ares with the ROM, captures only the ares window every few seconds, closes the ares it started, and writes `<out dir>/ares_sheet.png`. **Read the sheet.** MAME is lenient about VDP timing and has hidden real bugs (a scene drawn in the wrong colours showed in ares and not in MAME). The MAME check is for every iteration; the ares check is the last step before saying something works.
+
+ares takes no scripted input and its pad is not mapped here, so it shows what the ROM does on its own: the attract sequence, including its gameplay demo. Allow about 40 seconds to see the whole sequence. Compare with the same sequence in MAME (`tools/check_md.sh` with no input) and with the arcade.
 
 ## Inspect the picture
 

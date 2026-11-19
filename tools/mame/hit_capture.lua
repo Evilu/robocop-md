@@ -1,6 +1,7 @@
 -- Captures the hit detection's inputs and outputs, once per game step, on the
 -- arcade (robocop: the dual-port RAM before the HuC6280's interrupt and after it
--- has finished) or on the Mega Drive build (genesis: the stand-in at SHARED).
+-- has finished) or on the Mega Drive build (genesis: the player's values in the stand-in
+-- at SHARED, the object records in work RAM, where the build's routine works on them).
 -- env: TRACE_OUT, TRACE_FRAMES, HOLD
 -- out: hit_capture.bin: per step, 1,218 bytes in (dual-port offsets 0 to 0x4c1) then 1,218 bytes out
 -- Plays the same blind script as the other traces.
@@ -18,7 +19,13 @@ for a, v in string.gmatch(os.getenv("HOLD") or "", "(%x+)=(%x+)") do holds[#hold
 local out = io.open(out_dir .. "/hit_capture.bin", "wb")
 local function snapshot(flag)
   local t = {}
-  for i = 0, size - 1 do t[#t + 1] = string.char(i == 4 and flag or prog:read_u8(base + 2 * i + 1)) end
+  for i = 0, size - 1 do
+    local v
+    if i == 4 then v = flag
+    elseif not arcade and i >= 0x12 then v = prog:read_u8(0xff983c + i - 0x12)
+    else v = prog:read_u8(base + 2 * i + 1) end
+    t[#t + 1] = string.char(v)
+  end
   return table.concat(t)
 end
 local before, steps = nil, 0

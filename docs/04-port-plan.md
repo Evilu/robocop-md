@@ -2,7 +2,7 @@
 
 How *RoboCop* gets from the arcade board to a Mega Drive cartridge, in milestones. It builds on the measurements in [doc 01](01-architecture-dec0-vs-mega-drive.md), [doc 02](02-robocop-arcade-vs-md-demo.md) and [doc 03](03-robocop-measured.md).
 
-**Status: milestones 1 and 2 are done in an emulator, and the two scrolling layers of milestone 3 are drawn.** The arcade program boots and plays on the Mega Drive in MAME with sprites and backgrounds; the text layer (score, timer, energy bar, title screen) and sound are not there yet. Each milestone lists what has to be true before it counts as done.
+**Status: milestones 1 to 3 are done in emulators, stage 1 only.** The arcade program boots and plays on the Mega Drive with sprites, both scrolling layers and the text layer; checked in MAME and, for the picture, in ares. There is no sound. Each milestone lists what has to be true before it counts as done.
 
 ## Decisions
 
@@ -38,7 +38,7 @@ flowchart LR
 2. **Redirects pointers held in data**: 228 long values in the tilemap, palette and `0x242800` ranges that follow a routine's `rts`, sit in a run of such pointers, or follow a list terminator (the text printer's lists are `pointer, characters..., 0xFFFE, pointer, ...`). Values in the dual-port RAM's and the registers' ranges are never treated as data pointers: `0x0018` and `0x0024` followed by a small number are common in word tables.
 3. **Replaces the vector table and the header page.** Reset and VBlank (level 6) go to the hardware layer, which calls Data East's handler after reading the pad.
 4. **Replaces the exchanges with the HuC6280** (below).
-5. **Appends** the hardware layer after the program at `0x040000`, and the graphics converted to Mega Drive patterns: sprite tiles at `0x080000` and `0x100000`, layer tiles at `0x180000`. The ROM is 2 MB, flat.
+5. **Appends** the hardware layer after the program at `0x040000`, tables of blank tiles and characters at `0x070000`, and the graphics converted to Mega Drive patterns: sprite tiles at `0x080000` and `0x100000`, layer tiles at `0x180000`, characters at `0x1E0000`. The ROM is 2 MB, flat.
 
 About 210 values in hardware ranges are left alone as coincidences. The check for a missed one is dynamic: `tools/mame/md_state.lua` records every access the running build makes to an arcade hardware address, which on the Mega Drive is cartridge space. In 9,000 frames of play through stage 1 and into stage 2 there were none.
 
@@ -52,14 +52,15 @@ About 210 values in hardware ranges are left alone as coincidences. The check fo
 | Interrupt at `0x7630` (`clr.w $180ffe`) | `jsr hal_hit`: a 68000 transcription of the HuC6280's interrupt routine, working on the same bytes in the dual-port RAM's stand-in and reading the box tables from the 68000 ROM |
 | The two jumps to the restart code at `0x1BC`, inside the header page | Re-aimed at a trampoline at `0x200` |
 
-The game's own copies of the object records into the dual-port RAM and back are kept for now. They cost about 54,000 cycles per step on the arcade; removing them is an optimisation for later.
+The game's own copies of the 1,200 bytes of object records into the dual-port RAM and back are taken out (the two copy loops at `0x761C` and `0x767C` are skipped), and `hal_hit` reads and marks the records where the game keeps them, at `0xFF983C`. They cost about 54,000 cycles per step on the arcade. This is safe because nothing reads or writes the records between the send and the copy back: checked on the arcade with read and write taps over 6,000 frames. The player's values (energy, position, flags) still go through the stand-in, because the game applies the returned energy conditionally.
 
 **How the hit detection was checked.** `tools/mame/hit_capture.lua` records the dual-port RAM before and after each exchange, on the arcade and on the build. `tools/analysis/hit_model.py` holds a model of the HuC6280 routine and compares:
 
 | Capture | Steps | With objects | With a record marked | With energy taken | Differ from the model |
 |---|---|---|---|---|---|
 | Arcade (real HuC6280 program in MAME) | 1,619 | 568 | 31 | 28 | 0 |
-| Mega Drive build | 1,606 | 518 | 29 | 26 | 0 |
+| Mega Drive build, records copied as on the arcade | 1,606 | 518 | 29 | 26 | 0 |
+| Mega Drive build, records in place (current) | 1,125 | 619 | 32 | 31 | 0 |
 
 So the model equals the HuC6280 on everything the arcade run produced, and the 68000 routine equals the model on everything the build's run produced. The two runs are not the same game (see milestone 1), and neither reached object types that only appear later.
 
@@ -83,8 +84,11 @@ So the model equals the HuC6280 on everything the arcade run produced, and the 6
 | Layer 2 scroll tables `0x248000–0x2487FF` | `0xFF5800–0xFF5FFF` |
 | Text tilemap `0x244000–0x245FFF` | `0xFF6000–0xFF7FFF` |
 | Layer 3 scroll tables `0x24C800–0x24CFFF`, and `0x24E000–0x24E7FF` where the game's VBlank handler writes them | `0xFFC800–0xFFCFFF` |
-| Hardware layer, sprites | Variables `0xFFD000`, sprite table copy `0xFFD100`, upload queue `0xFFD300`, cache slot tables `0xFFD500–0xFFD6EF`, converted palettes `0xFFD700`, slot-of-key table `0xFFE000–0xFFF1FF` |
-| Hardware layer, tile layers | Slot tables `0xFF0880–0xFF0BBD`, layer records `0xFF0C40`, drawn bits `0xFF0C80–0xFF0D7F`, colour owners `0xFF0D80`, lines 2 and 3 `0xFF0DC0`, variables `0xFF0E00`, drawn map copies `0xFFD800–0xFFDFFF` and `0xFFF200–0xFFF9FF`, hash table `0xFFFA00–0xFFFDFF`, pen tables `0xFFFE00–0xFFFFFF`. Free: `0xFF0E40–0xFF0FFF`, `0xFFD740–0xFFD7FF` |
+| Hardware layer, sprites | Variables `0xFFD000`, sprite table copy `0xFFD100`, upload queue `0xFFD300`, cache slot tables `0xFFD500–0xFFD6EF`, converted palettes `0xFFD700`, slot-of-key table `0xFFE000–0xFFF1FF`, palette use counts `0xFF1600` |
+| Hardware layer, tile layers | Slot tables `0xFF0880–0xFF0BBD`, layer records `0xFF0C40`, drawn bits `0xFF0C80–0xFF0D7F`, colour owners `0xFF0D80`, lines 2 and 3 `0xFF0DC0`, variables `0xFF0E00`, full arcade colours `0xFF1240`, colour selection work area `0xFF1300–0xFF15FF`, drawn map copies `0xFFD800–0xFFDFFF` and `0xFFF200–0xFFF9FF`, hash table `0xFFFA00–0xFFFDFF`, pen tables `0xFFFE00–0xFFFFFF` |
+| Hardware layer, text | Block checksums and slots `0xFF0E40–0xFF0FCB`, variables `0xFF1040`, character cache keys `0xFF1100–0xFF123F`, pen tables `0xFFD740–0xFFD7FF` |
+
+The dual-port RAM's stand-in is 4 KB, but with the record copies gone the game only touches its first 36 bytes; the hardware layer uses `0xFF1040–0xFF1FFF` of it. If a later stage turns out to use the dual-port RAM as plain storage, those tables have to move.
 
 The two palette halves have to stay `0x4000` apart: the game keeps one pointer and adds `0x4000` to reach the blue half (`0x132C`). On real hardware the Mega Drive mirrors work RAM through `0xE00000–0xFFFFFF`, which does not matter here because no arcade address is in that range.
 
@@ -126,30 +130,53 @@ Measured in MAME over 7,746 gameplay frames (stage 1 with its boss, start of sta
 - The game still runs one step per two frames throughout.
 - Side by side with arcade snapshots the sprites match in shape and colour. Sprites that share line 0 with a fourth palette have not been looked for.
 
-### 3. Backgrounds, text and palettes — the two tile layers are drawn; text is not
+### 3. Backgrounds, text and palettes — done for stage 1 (emulators), with known faults
 
-`src/bg.s`. Layer 2 (the street) is on plane A and layer 3 (the skyline) on plane B, both 64×64 cells, the same 512×512 pixels as the arcade's maps, so scroll values carry over directly (horizontal negated, vertical plus the 16 cropped lines).
+**Tile layers** (`src/bg.s`). Layer 2 (the street) is on plane A and layer 3 (the skyline) on plane B, both 64×64 cells, the same 512×512 pixels as the arcade's maps, so scroll values carry over directly (horizontal negated, vertical plus the 16 cropped lines).
 
-- **Finding what changed.** The game writes its maps straight into RAM through 13 instructions. At each sprite latch one layer's map is compared with a copy of what has been recorded (layer 2 on even latches, layer 3 on odd); a changed entry gives its tile back and is marked not drawn.
+- **Finding what changed.** The game writes its maps straight into RAM through 13 instructions. At each update one layer's map is compared with a copy of what has been recorded (the layers take turns); a changed entry gives its tile back and is marked not drawn.
 - **Window.** Only the 19 × 17 tiles around the screen are kept drawn. When the scroll crosses a tile boundary, tiles that left the window give their slot back and the ones that entered are drawn. Drawing the whole map, as the first version did, needs more distinct tiles than VRAM has: the off-screen part of the arcade's map holds columns left over from earlier in the stage.
-- **Tile cache.** 207 slots of 4 patterns at VRAM patterns `0x004–0x33F`, keyed by tile and arcade palette through a 256-entry hash table, with a count of cells per slot. At most 8 new tiles and 160 tile draws per latch; the rest waits for the next one.
-- **Colour.** Layer 2 has palette line 2, layer 3 line 3, sprites lines 0 and 1. A tile's pixels are renumbered as it is copied into VRAM: each arcade colour gets the next free colour on its layer's line, and once the line is full, the nearest one already there. Layer 3 is opaque on the arcade, so its pen 0 is a real colour; it maps to colour 0 of line 3, which is shown as the backdrop. In stage 1 the skyline's 16 colours fit exactly; the street's 31 to 35 are cut to 15.
-- **Fades and scene changes.** Each console colour remembers the arcade palette entry it came from and is recomputed when the game queues a palette change, so fades follow. If more pens disagree with their table than did when it was built, the palettes are new: everything is cleared and drawn again.
-- **Sprites went from three palette lines to two** to make room. A third sprite palette on screen borrows line 0 and shows wrong colours.
+- **Tile cache.** 207 slots of 4 patterns at VRAM patterns `0x004–0x33F`, keyed by tile and arcade palette through a 256-entry hash table, with a count of cells per slot. At most 8 new tiles and 160 tile draws per update in play.
+
+**Colour.** Sprites have palette lines 0 and 1, layer 2 line 2, layer 3 line 3.
+
+- A tile's pixels are renumbered as it is copied into VRAM, through a table per arcade palette that gives each pen a colour number on its layer's line.
+- **The colours on a line are chosen when a scene is loaded**, from the layer's whole block of 16 arcade palettes: starting from black, the colour farthest from all those already chosen is added until the line is full. Each pen then takes the nearest. The first version handed colours out in the order tiles were first drawn; whatever scrolled in later got a nearest match, and the yellow and red of a shop sign became brown.
+- Layer 3 is opaque on the arcade, so its pen 0 is a real colour; it maps to colour 0 of line 3, which is shown as the backdrop.
+- Each console colour remembers the arcade palette entry it came from and is recomputed when the game changes its palette, so fades and palette animation follow.
+- **Scene loads.** The game draws a stage while its palettes are still black. The layers wait while their palettes are black. When a palette arrives the display goes off, the palette is given a few updates to stop changing (12 at most, for scenes that animate theirs), then the colours are chosen, the whole window is drawn in one go, and the display comes back on. A scene whose colour tables stop matching its palettes is reloaded the same way.
+- **Sprite palettes.** The two palettes used by the most sprites own lines 0 and 1. Any other sprite palette is shown with the line whose owner's colours are closest to its own, pen for pen.
+
+**Text** (`src/text.s`). The visible 32 × 28 characters are divided into blocks of 4 × 2, with a checksum per block to see changes (a quarter of the blocks are checked per update).
+
+- **On a plane, when one is free.** Every text-heavy arcade screen leaves one tile layer blank: the high-score page leaves layer 2 blank, the title page layer 3, the message pages both. The text is then written into the blank layer's plane as high-priority cells, each character loaded into VRAM once (160 patterns).
+- **As sprites, otherwise.** In the stages, where both layers are in use, a block with anything in it owns eight patterns and is shown as one 32×16 sprite in front of the game's sprites: 20 blocks at most, enough for the score, timer, weapon box and energy bar. The window plane was not used because it replaces plane A wherever it shows, and the HUD sits over the street.
+- Text is drawn with line 2. Two of that line's colours are kept back for it.
+- When the sprite table cannot hold both the HUD and all the game's sprites, they take turns to lose pieces.
+- The game's "curtain" (the text layer filled with one solid character while a scene is set up) is detected from sixteen sampled cells and shown as the display switched off.
+- Text screens never latch the sprite list, so when no latch has come for four frames the layers and text are updated from VBlank.
 
 Measured in MAME, stage 1 with its boss and the start of stage 2, energy held, 7,200 frames:
 
-- The game runs at one step per two frames: 3,600 steps. 239 VBlanks were missed, at scene loads.
-- 112 to 143 of the 207 tile slots in use; the cache never filled.
-- About 40 street pens were given a nearest colour instead of their own.
-- A scene takes about a second to fill in from black when it starts.
+- 3,388 game steps: 94% of one per two frames. 361 VBlanks missed, at scene loads.
+- 135 to 137 of the 207 tile slots in use in stage 1; the cache never filled.
+- 32.8 sprites in the table on average, 62 at most; more than 16 on a line in 1.9% of frames.
+- 1,273 sprite pieces lost to the full table over the run, mostly in the boss fight.
+- No access to an unredirected hardware address.
 
-Still to do in this milestone:
+Seen in ares (attract sequence only; ares takes no scripted input): the title page, the message pages, the start-up text and the gameplay demo with its HUD are drawn as in MAME.
 
-- **The text layer**: score, timer, energy bar, messages, the title and high-score screens. Until then the attract mode is mostly a black screen.
-- **Colour quality**: the street loses half its colours, and sprites beyond two palettes are wrong. Candidates: renumbering sprite pixels too, so sprite palettes can share lines; choosing the 15 street colours from all the palettes in the scene instead of first come, first served.
-- The priority register (title screen), and the bottom 8 and top 8 lines of the arcade picture.
-- Scene start: the display should stay off, or the old picture stay up, until the new one is complete.
+Known faults:
+
+- **High-score page**: the portrait behind the table does not appear in ares and some of the table's cells are missing; in MAME the table is complete and the portrait comes and goes.
+- **Story pages** (the pictures with captions before the title) were black in the ares captures.
+- The title logo shows speckles.
+- Game speed is 6% under the arcade's in stage 1.
+- The street has 13 colours for the arcade's 40: shades merge, and one shop sign loses its green.
+- A scene change blanks the screen for a fraction of a second.
+- The top 8 and bottom 8 lines of the arcade picture are cut off, and the score sits on the very top line.
+- The text layer's row scroll, used in 3% of gameplay frames, is ignored.
+- Sprites over 16 on a line vanish instead of flickering.
 
 ### 4. Sound
 
@@ -171,8 +198,8 @@ Still to do in this milestone:
 
 ## Open problems
 
-- **Sprites per line** in H32 against the arcade's crowds (doc 03, section 2).
-- **Where the HUD goes** without spending the sprite budget.
-- **Proving the hit detection rewrite** equal to the HuC6280's.
+- **Sprites per line and per frame** in H32 against the arcade's crowds plus a sprite HUD (doc 03, section 2).
+- **Colour**: 13 street colours, two sprite lines.
+- **CPU time**: stage 1 runs 6% slow; comparing a tile map each update and renumbering tile pixels are the main costs left.
 - **The music arrangement**: twelve FM voices on two chip types into six.
 - **Everything after stage 1** is unmeasured.

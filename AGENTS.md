@@ -12,7 +12,7 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 - **Measure, then write.** Every number in `docs/` was computed from a ROM, a trace or a cited source. Re-derive before repeating a figure, say what was not measured, and correct the docs when a measurement turns out wrong.
 - **Stage 1 only so far.** All traces cover attract mode, stage 1 and the first screens of stage 2 under scripted play. Do not generalise to later stages.
 - **Extracted archives are untrusted.** Unpack into their own folder under `analysis/roms/`, keep scripts in `tools/`, run Python that reads them with `-I`.
-- **Do not open windows on the user's screen for automated checks.** Use MAME headless (`-video none`). Launch a windowed emulator only when the user asks to see something, and never kill processes by name.
+- **Check in MAME while working, and in ares before calling anything finished.** MAME headless (`-video none`, `tools/check_md.sh`) is for every iteration and opens nothing on the user's screen. When you think a change is done, also run `tools/check_ares.sh`: it opens ares, captures only its window, closes the ares it started and writes a contact sheet. Look at the sheet. ares is stricter than MAME and has shown bugs MAME hid; a picture that is right in MAME is not yet right. Never kill processes by name, and open no other windows unless the user asks.
 - Do not write tests or planning documents unless asked. Avoid comments; code should read clearly without them.
 - Commits carry the user as the only author: no co-author trailer.
 
@@ -24,6 +24,7 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 | `src/hal.s` | The Mega Drive hardware layer: boot, VBlank, pad, and the HuC6280's two jobs (GNU as, Motorola operand syntax, `\|` comments) |
 | `src/sprites.s` | Sprite RAM to Mega Drive sprites: pieces, VRAM pattern cache, palette lines, the flush at VBlank |
 | `src/bg.s` | Tile layers 2 and 3 on planes A and B: change detection, window, tile cache, pixel renumbering onto palette lines 2 and 3 |
+| `src/text.s` | The text layer: on a free plane when a tile layer is blank, as sprite blocks in the stages; the display curtain |
 | `build_md.py` | Builds the Mega Drive ROM from the user's `robocop.zip` (calls `tools/build/build.py`) |
 | `test/roms/md/` (ignored) | Built ROMs for the user to try |
 | `tools/prep_roms.py` | Builds flat program and graphics images, and a MAME-ready ROM folder, from the user's sets |
@@ -32,12 +33,14 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 | `tools/analysis/` | Static code and hardware map, trace summaries, profile report, VDP dump renderer, 68000 disassembler, hit detection model |
 | `tools/check_md.sh` | One-command headless check of a Mega Drive ROM (`TRACE_INPUT=start` plays the demo) |
 | `tools/run_md.sh` | Runs a ROM in MAME through a one-entry software list |
+| `tools/check_ares.sh` | Runs a ROM in ares, captures its window at intervals and makes a contact sheet: the last check before a change is called done |
 | `analysis/` (ignored) | `roms/`, `work/` images, `ghidra/` projects, `out/` exports, `mame/` runs, `venv/` |
 
 `tools/README.md` has the commands. Skills in `.claude/skills/` cover the three recurring jobs: `trace-arcade`, `disassemble-68k`, `check-md-rom`. 
 
 ## Environment
 
+- ares v148 is at `~/Downloads/ares-v148/ares.app` (`ARES` overrides the binary). Its window can be captured because the terminal has macOS screen recording permission. Its Mega Drive pad is not mapped and it takes no scripted input, so an ares check shows attract mode only; gameplay is checked in MAME.
 - MAME 0.289 and `m68k-elf-binutils` from Homebrew. Ghidra 12.2 is at `/opt/homebrew/opt/ghidra/libexec` and needs `JAVA_HOME=/opt/homebrew/opt/openjdk@25` (it refuses Java 21).
 - Python helpers that need `capstone` or `Pillow` run from `analysis/venv/bin/python3`.
 - The user's `robocop.zip` holds the two video PROMs at twice MAME's size under shorter names; `tools/prep_roms.py` writes a set MAME verifies to `analysis/mame/roms/`. Run MAME from `analysis/mame` with `-rompath roms`.
@@ -81,12 +84,19 @@ The sister project, `cadillacs-and-dinosaurs-md`, did the same for a CPS-1 game.
 - The stand-in for the VBlank flag (bit 7 of `0xFF0863`) must read 0, or the arcade's VBlank handler never returns. DIP switches read `0xFF7F`.
 - **The build cannot be compared with the arcade step for step.** The game's random numbers come from a counter the frame wait loop spins (`0xFF8008`), so they depend on timing. Compare statistics, or one routine at a time on captured inputs, as `hit_capture.lua` and `hit_model.py` do for the hit detection.
 - Take hardware-layer addresses from the linker's symbol table.
-- **VRAM layout (H32, planes 64×64):** tile cache patterns `0x004–0x33F` (207 slots of 4), sprite cache `0x340–0x5BF` (80 slots of 8), sprite table `0xB800`, hscroll `0xBC00`, plane A `0xC000`, plane B `0xE000`. Nothing is left for the text layer yet.
-- **Palette lines:** sprites 0 and 1, layer 2 on line 2, layer 3 on line 3 with colour 0 of line 3 as the backdrop (layer 3's pen 0 is a real colour on the arcade).
+- **VRAM layout (H32, planes 64×64):** tile cache patterns `0x004–0x33F` (207 slots of 4), sprite cache `0x340–0x547` (65 slots of 8), text `0x548–0x5BF` plus the gaps `0x5D0–0x5DF` and `0x5E8–0x5FF` around the sprite and scroll tables (20 blocks of 8, or 160 single characters), sprite table `0xB800`, hscroll `0xBC00`, plane A `0xC000`, plane B `0xE000`. All of it is spoken for.
+- **Palette lines:** sprites 0 and 1 (the two most-used palettes own them, the rest borrow the closer), layer 2 and text on line 2, layer 3 on line 3 with colour 0 of line 3 as the backdrop (layer 3's pen 0 is a real colour on the arcade).
+- **Choose a line's colours from the whole palette block at scene load, not as tiles arrive.** First come, first served gave whatever scrolled in later a nearest match and turned a yellow and red sign brown. Start the choice from black, or the darks take a tint.
+- **The game draws a scene while its palettes are black and loads them afterwards, 16 entries a frame; some scenes animate their palettes for ever.** Never build colour tables from a black or half-loaded palette, and never wait for a palette to stop changing without a time limit. `bg.s` waits at most 12 updates, with the display off.
+- **Text screens never latch the sprite list.** Anything that must keep up on those screens has to run from VBlank (`hal_idle`), not only from the latch.
+- **Every text-heavy screen leaves a tile layer blank** (high scores: layer 2; title: layer 3; messages: both). That is what lets the text have a plane there. In the stages it has to be sprites: the window plane would blank the street behind the HUD.
+- The game hides scene set-up behind a text layer filled with one solid character. `text.s` treats sixteen agreeing sample cells as that curtain and switches the display off.
 - **Do not draw the whole arcade map.** Its off-screen part holds stale columns, and all of it together needs more distinct tiles than VRAM has. `bg.s` keeps a 19 × 17 tile window.
-- **Hardware layer RAM is nearly full.** Free: `0xFF0E40–0xFF0FFF` and `0xFFD740–0xFFD7FF`. Check a new table against the map in `docs/04-port-plan.md`; `bg.s` once put two variables on top of a palette line.
+- **Hardware layer RAM is nearly full**, and the newest tables live in the dual-port RAM's stand-in (`0xFF1040–0xFF1FFF`), which is free only because the build removed the game's record copies and the game touches just its first 36 bytes in everything played so far. Check a new table against the map in `docs/04-port-plan.md`; `bg.s` once put two variables on top of a palette line.
 - **The game queues palette changes** in `0xFF8DCA` and `0xFFB530` and applies them in its VBlank handler. The hardware layer watches those two instead of checksumming the palette every step (which cost 17,000 cycles).
 - Comparing all 1,024 entries of a tile map costs about 22,000 cycles. One layer is compared per step.
+- **The hit detection works on the object records in place** (`0xFF983C`); the game's 1,200-byte copies out and back are skipped. Nothing touches the records between the two on the arcade (taps, 6,000 frames). `hit_capture.lua` knows where to read each machine's records.
+- GNU as rejects a short branch that is out of range rather than widening it; after adding code in the middle of a file expect to change a few `.s` to `.w`. A build that fails leaves the previous ROM in place, so read the build's output before trusting a test run.
 - The ROM now holds graphics at `0x180000–0x180FFF`, the arcade's dual-port RAM address: `md_state.lua` ignores accesses made by the hardware layer itself (PC from `0x040000`).
 - **Sprite tiles are stored twice in the ROM**: singly at `0x080000` (128 bytes each) and as vertical pairs at `0x100000` (256 bytes per pair), because a 16×32 Mega Drive sprite needs its eight patterns in one run, column by column. Cache keys are the tile code for singles and 3072 + pair number for pairs.
 - **The sprite table is built at the latch and sent at the next VBlank**, one frame later, with the patterns it needs. Anything else drawn from the same game step should be sent at that VBlank too.

@@ -4,8 +4,10 @@
 | tile is drawn as four cells. Tile patterns come from ROM through a cache of
 | four-pattern slots keyed by tile and arcade palette, and their pixels are
 | renumbered on the way in: layer 2 has palette line 2 and layer 3 line 3, whose
-| colours are handed out to arcade colours as they are first needed, nearest
-| match after that. Layer 3 is opaque on the arcade, so it also uses colour 0 of
+| colours are chosen from the layer's whole palette block when a scene is
+| loaded (bg_choose_colours); every pen then takes the nearest one. The text
+| shares line 2: three of its colours are kept back for the text, which claims
+| them as it needs them. Layer 3 is opaque on the arcade, so it also uses colour 0 of
 | its line, shown as the backdrop.
 
     .equ L2_MAP,        0xff4800
@@ -35,11 +37,26 @@
     .equ bg_first,      BG_VARS + 32
     .equ bg_capacity,   BG_VARS + 34
     .equ bg_pal_flag,   BG_VARS + 36
+    .equ bg_text_colours, BG_VARS + 38    | colours on line 2 that text asked for
+    .equ TEXT_RESERVE,  2
+    .equ bg_dark,       BG_VARS + 40    | the tile palettes are all black: nothing is drawn
+    .equ bg_loading,    BG_VARS + 42    | a scene is being drawn with the display off; counts down
+    .equ LOADING_LATCHES, 8
+    .equ bg_full_base,  BG_VARS + 44
+    .equ bg_settle,     BG_VARS + 48    | latches to wait after the last palette change before judging the colour tables
+    .equ SETTLE_LATCHES, 3
+    .equ bg_hold,       BG_VARS + 50    | a scene's palette has arrived: latches left before it is built regardless
+    .equ bg_bad,        BG_VARS + 52    | the colour tables have gone wrong: latches left before a rebuild regardless
+    .equ HOLD_LATCHES,  12
+    .equ NEAR,          1
+    .equ CANDIDATES,    0xff1300    | 256 words: a palette block as console colours
+    .equ FARNESS,       0xff1500    | 256 bytes: each one's distance from the colours chosen so far
+    .equ BG_FULL,       0xff1240    | 32 longs: the arcade colour (red, green, blue) each line colour was given for
     .equ BG_LINE,       0xff0dc0    | 32 words: palette lines 2 and 3 as sent to the console
     .equ BG_OWNER,      0xff0d80    | 32 words: the arcade palette entry each colour follows
     .equ BG_LUT_OK,     0xff0c20    | 32 bytes
     .equ BG_LAYER2,     0xff0c40    | per layer: map, drawn copy, valid bits, registers, key bit, plane, window, redraw flag
-    .equ BG_LAYER3,     0xff0c58
+    .equ BG_LAYER3,     0xff0c5a
     .equ L2_VALID,      0xff0c80    | bit per map entry: its cells in VRAM show the drawn copy
     .equ L3_VALID,      0xff0d00
     .equ LAYER_MAP,     0
@@ -50,6 +67,7 @@
     .equ LAYER_PLANE,   18
     .equ LAYER_WINDOW,  20
     .equ LAYER_REDRAW,  22
+    .equ LAYER_COUNT,   24    | cells drawn with a tile that is not blank
 
     .equ BG_SLOTS,      207
     .equ BG_PATTERNS,   4
@@ -65,7 +83,11 @@
 
 bg_reset:
     addq.w  #1, bg_resets
+    move.w  #LOADING_LATCHES, bg_loading
+    clr.w   bg_hold
+    clr.w   bg_bad
     clr.l   bg_line_used
+    clr.w   bg_text_colours
     clr.w   bg_inexact
     move.w  #1, bg_line_dirty
     move.w  #4, bg_pal_flag
@@ -107,6 +129,7 @@ bg_reset:
     move.w  #0xc000, (a0)+
     move.w  d1, (a0)+
     move.w  #1, (a0)+
+    clr.w   (a0)+
     move.l  #L3_MAP, (a0)+
     move.l  #L3_DRAWN, (a0)+
     move.l  #L3_VALID, (a0)+
@@ -115,22 +138,48 @@ bg_reset:
     move.w  #0xe000, (a0)+
     move.w  d1, (a0)+
     move.w  #1, (a0)+
+    clr.w   (a0)+
     move.l  #0x40000003, VDP_CTRL
     move.w  #0x0fff, d0
 7:  move.l  #0, VDP_DATA
     dbra    d0, 7b
-    rts
+    moveq   #0, d0
+    bsr.w   bg_choose_colours
+    moveq   #16, d0
+    bsr.w   bg_choose_colours
+    bra.w   text_invalidate
 
 bg_update:
     bsr.w   bg_palette_check
-    move.w  #BG_UPLOADS, bg_uploads_left
+    tst.w   bg_dark
+    bne.w   5f
+    tst.w   bg_hold
+    bne.w   5f
+    tst.w   bg_loading
+    beq.s   4f
+    subq.w  #1, bg_loading
+    move.w  #0x7fff, bg_uploads_left
+    move.w  #0x7fff, bg_cells_left
+    lea     BG_LAYER2, a5
+    bsr.w   bg_layer
+    lea     BG_LAYER3, a5
+    bsr.w   bg_layer
+    lea     BG_LAYER2, a5
+    tst.w   LAYER_REDRAW(a5)
+    bne.s   5f
+    lea     BG_LAYER3, a5
+    tst.w   LAYER_REDRAW(a5)
+    bne.s   5f
+    clr.w   bg_loading
+    bra.s   5f
+4:  move.w  #BG_UPLOADS, bg_uploads_left
     move.w  #BG_CELLS, bg_cells_left
     lea     BG_LAYER2, a5
-    btst    #0, spr_stamp + 1
+    btst    #0, hal_tick + 1
     beq.s   3f
     lea     BG_LAYER3, a5
 3:  bsr.w   bg_layer
-    tst.w   bg_line_dirty
+5:  tst.w   bg_line_dirty
     beq.s   2f
     clr.w   bg_line_dirty
     move.l  #0xc0400000, VDP_CTRL
@@ -285,6 +334,7 @@ bg_release:
     tst.w   (a2, d0.w)
     beq.s   2f
     subq.w  #1, (a2, d0.w)
+    subq.w  #1, LAYER_COUNT(a5)
 2:  rts
 
 | d7 = twice the map index. Draws the tile recorded there as four cells. Minus when it could not.
@@ -303,6 +353,7 @@ bg_draw:
     move.w  d4, d0
     add.w   d0, d0
     addq.w  #1, (a2, d0.w)
+    addq.w  #1, LAYER_COUNT(a5)
     lsl.w   #2, d4
     addi.w  #BG_PATTERNS + 0x4000, d4
     tst.w   d5
@@ -313,7 +364,12 @@ bg_draw:
     move.w  d0, d1
     lsr.w   #3, d1
     bset    d0, (a6, d1.w)
-    move.w  d0, d1
+    tst.w   d4
+    bne.s   7f
+    move.w  LAYER_PLANE(a5), d1
+    cmp.w   text_plane, d1
+    beq.w   6f
+7:  move.w  d0, d1
     lsr.w   #4, d1
     andi.w  #31, d1
     lsl.w   #8, d1
@@ -530,13 +586,24 @@ bg_line_for:
     lea     BG_LINE, a3
     lea     BG_OWNER, a4
     lea     bg_line_used, a5
+    move.l  #BG_FULL, bg_full_base
     move.w  #1, bg_first
     move.w  #15, bg_capacity
+    cmpi.w  #32, d0
+    bhs.s   1f
     cmpi.w  #16, d0
-    blo.s   1f
+    bhs.s   2f
+    cmpi.w  #TEXT_RESERVE, bg_text_colours
+    bhs.s   1f
+    move.w  #15 - TEXT_RESERVE, bg_capacity
+    move.w  bg_text_colours, d1
+    add.w   d1, bg_capacity
+    rts
+2:
     lea     32(a3), a3
     lea     32(a4), a4
     addq.l  #2, a5
+    move.l  #BG_FULL + 64, bg_full_base
     clr.w   bg_first
     move.w  #16, bg_capacity
 1:  rts
@@ -544,9 +611,24 @@ bg_line_for:
 | d0 = palette number. Fills its 16 pens' colour numbers.
 bg_lut_build:
     movem.l d0-d7/a0-a6, -(sp)
-    lea     BG_LUT_OK, a2
+    bsr.w   bg_line_for
+    cmpi.w  #32, d0
+    blo.s   1f
+    move.w  d0, d7
+    subi.w  #64, d7
+    lsl.w   #5, d7
+    lea     BG_PALETTES, a0
+    adda.w  d7, a0
+    lea     BG_BLUES, a1
+    adda.w  d7, a1
+    move.w  d0, d7
+    subi.w  #32, d7
+    lsl.w   #4, d7
+    lea     TEXT_LUT, a2
+    adda.w  d7, a2
+    bra.s   2f
+1:  lea     BG_LUT_OK, a2
     st      (a2, d0.w)
-    bsr.s   bg_line_for
     move.w  d0, d7
     lsl.w   #5, d7
     lea     BG_PALETTES, a0
@@ -556,10 +638,14 @@ bg_lut_build:
     lsr.w   #1, d7
     lea     BG_LUT, a2
     adda.w  d7, a2
-    moveq   #0, d6
+2:  moveq   #0, d6
 bg_lut_pen:
     move.w  (a0)+, d0
     move.w  (a1)+, d1
+    move.w  d0, d7
+    swap    d7
+    move.w  d1, d7
+    andi.w  #0x00ff, d7
     bsr.w   colour9
     tst.w   d6
     bne.s   1f
@@ -569,19 +655,37 @@ bg_lut_pen:
     bra.w   bg_lut_next
 1:  move.w  bg_first, d4
     move.w  d4, d0
-    add.w   d0, d0
-    lea     (a3, d0.w), a6
+    lsl.w   #2, d0
+    movea.l bg_full_base, a6
+    adda.w  d0, a6
     move.w  (a5), d3
     bra.s   3f
-2:  cmp.w   (a6)+, d2
+2:  cmp.l   (a6)+, d7
     beq.w   bg_lut_got
     addq.w  #1, d4
 3:  dbra    d3, 2b
+    bsr.w   bg_nearest
+    cmpi.w  #32, 2(sp)
+    blo.w   bg_lut_near
+    cmpi.w  #NEAR, d5
+    bls.w   bg_lut_near
     move.w  (a5), d0
     cmp.w   bg_capacity, d0
-    bhs.s   4f
+    bhs.w   bg_lut_near
+    move.w  (a5), d4
+    add.w   bg_first, d4
+    move.w  d4, d0
+    lsl.w   #2, d0
+    movea.l bg_full_base, a6
+    adda.w  d0, a6
     addq.w  #1, (a5)
-    move.w  d2, (a6)
+    cmpi.w  #32, 2(sp)
+    blo.s   2f
+    addq.w  #1, bg_text_colours
+2:  move.l  d7, (a6)
+    move.w  d4, d1
+    add.w   d1, d1
+    move.w  d2, (a3, d1.w)
     move.l  a0, d0
     subi.l  #BG_PALETTES + 2, d0
     move.w  d4, d1
@@ -589,12 +693,157 @@ bg_lut_pen:
     move.w  d0, (a4, d1.w)
     move.w  #1, bg_line_dirty
     bra.s   bg_lut_got
-4:  addq.w  #1, bg_inexact
+bg_lut_near:
+    addq.w  #1, bg_inexact
+bg_lut_got:
+    move.b  d4, (a2)+
+bg_lut_next:
+    addq.w  #1, d6
+    cmpi.w  #16, d6
+    bne.w   bg_lut_pen
+    movem.l (sp)+, d0-d7/a0-a6
+    rts
+
+| d0 = 0 (layer 2) or 16 (layer 3). Fills that layer's palette line from its
+| whole block of 16 arcade palettes: starting from black if the block has it, the colour
+| farthest from all those already chosen is added until the line is full or
+| every colour in the block is on it. Hues that stand apart get a place however
+| late their tiles come into view; close shades share.
+bg_choose_colours:
+    bsr.w   bg_line_for
+    move.w  #15 - TEXT_RESERVE, bg_capacity
+    lea     BG_PALETTES, a0
+    lea     BG_BLUES, a1
+    tst.w   d0
+    beq.s   1f
+    move.w  #16, bg_capacity
+    lea     0x200(a0), a0
+    lea     0x200(a1), a1
+1:  lea     CANDIDATES, a2
+    lea     FARNESS, a6
+    move.w  #255, d3
+2:  move.w  (a0)+, d0
+    move.w  (a1)+, d1
+    bsr.w   colour9
+    move.w  d2, (a2)+
+    move.b  #0x7f, (a6)+
+    dbra    d3, 2b
+    moveq   #0, d4
+    tst.w   bg_first
+    beq.s   4f
+    lea     FARNESS, a6
+    moveq   #15, d3
+3:  clr.b   (a6)
+    lea     16(a6), a6
+    dbra    d3, 3b
+    moveq   #1, d4
+4:  lea     CANDIDATES, a2
+    lea     FARNESS, a6
+    moveq   #0, d3
+5:  tst.b   (a6)+
+    beq.s   6f
+    tst.w   (a2)
+    bne.s   6f
+    move.w  d3, d4
+    bra.s   7f
+6:  addq.l  #2, a2
+    addq.w  #1, d3
+    cmpi.w  #256, d3
+    bne.s   5b
+7:  clr.w   (a5)
+bg_choose_next:
+    move.w  (a5), d0
+    cmp.w   bg_capacity, d0
+    bhs.w   bg_choose_done
+    add.w   bg_first, d0
+    addq.w  #1, (a5)
+    move.w  d4, d1
+    add.w   d1, d1
+    lea     CANDIDATES, a2
+    move.w  (a2, d1.w), d2
+    move.w  d0, d3
+    add.w   d3, d3
+    move.w  d2, (a3, d3.w)
+    tst.w   bg_first
+    bne.s   1f
+    addi.w  #0x200, d1
+1:  move.w  d1, (a4, d3.w)
+    lea     BG_PALETTES, a0
+    lea     BG_BLUES, a1
+    movea.l bg_full_base, a2
+    add.w   d3, d3
+    move.w  (a0, d1.w), (a2, d3.w)
+    move.w  (a1, d1.w), d0
+    andi.w  #0x00ff, d0
+    move.w  d0, 2(a2, d3.w)
+    lea     FARNESS, a6
+    clr.b   (a6, d4.w)
+    move.w  d2, d5
+    andi.w  #0x00e, d5
+    move.w  d2, d6
+    lsr.w   #4, d6
+    andi.w  #0x00e, d6
+    move.w  d2, d7
+    lsr.w   #8, d7
+    andi.w  #0x00e, d7
+    lea     CANDIDATES, a2
+    moveq   #0, d4
+    suba.l  a1, a1
+    moveq   #0, d2
+2:  move.w  (a2)+, d0
+    tst.b   (a6)
+    beq.s   6f
+    move.w  d0, d1
+    andi.w  #0x00e, d1
+    sub.w   d5, d1
+    bpl.s   3f
+    neg.w   d1
+3:  move.w  d0, d3
+    lsr.w   #4, d3
+    andi.w  #0x00e, d3
+    sub.w   d6, d3
+    bpl.s   4f
+    neg.w   d3
+4:  add.w   d3, d1
+    lsr.w   #8, d0
+    andi.w  #0x00e, d0
+    sub.w   d7, d0
+    bpl.s   5f
+    neg.w   d0
+5:  add.w   d0, d1
+    cmp.b   (a6), d1
+    bhs.s   7f
+    move.b  d1, (a6)
+7:  cmp.b   (a6), d4
+    bhs.s   6f
+    move.b  (a6), d4
+    movea.w d2, a1
+6:  addq.l  #1, a6
+    addq.w  #1, d2
+    cmpi.w  #256, d2
+    bne.s   2b
+    tst.b   d4
+    beq.s   bg_choose_done
+    move.w  a1, d4
+    bra.w   bg_choose_next
+bg_choose_done:
+    move.w  #1, bg_line_dirty
+    rts
+
+| d2 = console colour, a3 = the layer's line, a5 = its count. Returns the closest
+| colour already on the line in d4 and how far it is in d5 (999 when the line is empty).
+bg_nearest:
+    move.l  d7, -(sp)
     move.w  bg_first, d3
     move.w  d3, d0
     add.w   d0, d0
     lea     (a3, d0.w), a6
+    move.w  (a5), d1
+    add.w   d3, d1
+    move.w  d1, -(sp)
     move.w  #999, d5
+4:  cmp.w   (sp), d3
+    bhs.s   3f
 5:  moveq   #0, d1
     move.w  (a6), d0
     andi.w  #0x00e, d0
@@ -627,40 +876,99 @@ bg_lut_pen:
     move.w  d1, d5
     move.w  d3, d4
 9:  addq.w  #1, d3
-    cmpi.w  #16, d3
-    bne.s   5b
-bg_lut_got:
-    move.b  d4, (a2)+
-bg_lut_next:
-    addq.w  #1, d6
-    cmpi.w  #16, d6
-    bne.w   bg_lut_pen
-    movem.l (sp)+, d0-d7/a0-a6
+    bra.s   4b
+3:  addq.l  #2, sp
+    move.l  (sp)+, d7
     rts
 
-| When the arcade's tile palettes change: lines 2 and 3 follow the entries their
-| colours came from (so fades work), and if the palettes no longer agree with
-| the pen tables built from them, everything is thrown away and drawn again.
+| While the arcade's palettes are changing, lines 2 and 3 follow the entries
+| their colours came from (so fades work) and a scene not yet drawn waits. Once
+| they have been still for a few latches the pen tables are checked against
+| them, and if they no longer agree everything is thrown away and drawn again.
 bg_palette_check:
     tst.w   bg_pal_flag
-    beq.w   bg_palette_same
+    beq.w   bg_palette_quiet
     subq.w  #1, bg_pal_flag
     lea     BG_PALETTES, a0
     lea     BG_BLUES, a1
     moveq   #0, d0
+    moveq   #0, d3
     move.w  #511, d1
-1:  add.w   (a0)+, d0
+1:  move.w  (a0)+, d2
+    or.w    d2, d3
+    add.w   d2, d0
+    rol.w   #1, d0
+    move.w  (a1)+, d2
+    or.b    d2, d3
+    add.w   d2, d0
+    dbra    d1, 1b
+    lea     PALETTE_RG, a0
+    lea     PALETTE_B, a1
+    move.w  #255, d1
+9:  add.w   (a0)+, d0
     rol.w   #1, d0
     add.w   (a1)+, d0
-    dbra    d1, 1b
+    dbra    d1, 9b
     cmp.w   bg_pal_sum, d0
-    beq.w   bg_palette_same
+    beq.w   bg_palette_quiet
     move.w  d0, bg_pal_sum
+    move.w  #SETTLE_LATCHES, bg_settle
+    tst.w   d3
+    bne.s   1f
+    tst.w   bg_dark
+    bne.w   bg_palette_same
+    bsr.w   bg_reset
+    move.w  #1, bg_dark
+    clr.w   bg_loading
+    rts
+1:  tst.w   bg_dark
+    beq.s   2f
+    clr.w   bg_dark
+    move.w  #HOLD_LATCHES, bg_hold
+    rts
+2:  tst.w   bg_hold
+    bne.w   bg_palette_same
     moveq   #0, d0
     bsr.w   bg_line_refresh
     moveq   #16, d0
     bsr.w   bg_line_refresh
     move.w  #1, bg_line_dirty
+    bsr.w   text_validate
+    bsr.s   bg_validate
+    bls.s   bg_palette_wait
+    tst.w   bg_bad
+    bne.s   bg_palette_wait
+    move.w  #HOLD_LATCHES, bg_bad
+    bra.s   bg_palette_wait
+bg_palette_quiet:
+    tst.w   bg_settle
+    beq.s   bg_palette_wait
+    subq.w  #1, bg_settle
+| A scene whose palette has just arrived, or whose colour tables have gone
+| wrong, is built afresh once the palette has been still for a few latches, or
+| after HOLD_LATCHES if it never is (some scenes animate their palettes).
+bg_palette_wait:
+    tst.w   bg_hold
+    beq.s   1f
+    subq.w  #1, bg_hold
+    beq.s   2f
+    tst.w   bg_settle
+    bne.s   bg_palette_same
+2:  clr.w   bg_hold
+    clr.w   bg_bad
+    bra.w   bg_reset
+1:  tst.w   bg_bad
+    beq.s   bg_palette_same
+    subq.w  #1, bg_bad
+    beq.s   2b
+    tst.w   bg_settle
+    beq.s   2b
+bg_palette_same:
+    rts
+
+| Counts the pens whose arcade colour is not the one their line colour stands
+| for. Returns higher when that is more than when the tables were built.
+bg_validate:
     moveq   #0, d7
     moveq   #0, d6
 4:  lea     BG_LUT_OK, a2
@@ -678,16 +986,18 @@ bg_palette_check:
     lea     BG_LUT, a2
     adda.w  d4, a2
     moveq   #15, d5
-5:  move.w  (a0)+, d0
-    move.w  (a1)+, d1
-    bsr.w   colour9
+5:  move.w  (a0)+, d2
+    swap    d2
+    move.w  (a1)+, d2
+    andi.w  #0x00ff, d2
     moveq   #0, d0
     move.b  (a2)+, d0
     bne.s   6f
     tst.w   bg_first
     bne.s   7f
-6:  add.w   d0, d0
-    cmp.w   (a3, d0.w), d2
+6:  lsl.w   #2, d0
+    movea.l bg_full_base, a6
+    cmp.l   (a6, d0.w), d2
     beq.s   7f
     addq.w  #1, d7
 7:  dbra    d5, 5b
@@ -697,9 +1007,6 @@ bg_palette_check:
     move.w  bg_inexact, d0
     addq.w  #4, d0
     cmp.w   d0, d7
-    bls.s   bg_palette_same
-    bsr.w   bg_reset
-bg_palette_same:
     rts
 
 | d0 = 0 or 16: recomputes that layer's line from the arcade entries its colours follow.
@@ -709,6 +1016,9 @@ bg_line_refresh:
     add.w   d0, d0
     adda.w  d0, a3
     adda.w  d0, a4
+    movea.l bg_full_base, a2
+    adda.w  d0, a2
+    adda.w  d0, a2
     move.w  (a5), d3
     bra.s   2f
 1:  move.w  (a4)+, d4
@@ -716,24 +1026,56 @@ bg_line_refresh:
     move.w  (a0, d4.w), d0
     lea     BG_BLUES, a1
     move.w  (a1, d4.w), d1
+    move.w  d0, (a2)+
+    move.w  d1, d2
+    andi.w  #0x00ff, d2
+    move.w  d2, (a2)+
     bsr.w   colour9
     move.w  d2, (a3)+
 2:  dbra    d3, 1b
+    rts
+
+| a5 = layer. Forgets everything drawn for it, so that it is drawn again.
+bg_layer_invalidate:
+    movea.l LAYER_DRAWN(a5), a1
+    movea.l LAYER_VALID(a5), a6
+    move.w  LAYER_BIT(a5), d5
+    moveq   #0, d6
+1:  move.w  d6, d0
+    add.w   d0, d0
+    move.w  (a1, d0.w), d0
+    bsr.w   bg_release
+    addq.w  #1, d6
+    cmpi.w  #1024, d6
+    bne.s   1b
+    move.w  #1, LAYER_REDRAW(a5)
     rts
 
 bg_scroll:
     move.l  #0x7c000002, VDP_CTRL
     move.w  PF2_REGS + 0x10, d0
     neg.w   d0
-    move.w  d0, VDP_DATA
+    cmpi.w  #0xc000, text_plane
+    bne.s   1f
+    moveq   #0, d0
+1:  move.w  d0, VDP_DATA
     move.w  PF3_REGS + 0x10, d0
     neg.w   d0
-    move.w  d0, VDP_DATA
+    cmpi.w  #0xe000, text_plane
+    bne.s   2f
+    moveq   #0, d0
+2:  move.w  d0, VDP_DATA
     move.l  #0x40000010, VDP_CTRL
     move.w  PF2_REGS + 0x12, d0
-    addi.w  #TOP_LINE, d0
+    cmpi.w  #0xc000, text_plane
+    bne.s   3f
+    moveq   #0, d0
+3:  addi.w  #TOP_LINE, d0
     move.w  d0, VDP_DATA
     move.w  PF3_REGS + 0x12, d0
-    addi.w  #TOP_LINE, d0
+    cmpi.w  #0xe000, text_plane
+    bne.s   4f
+    moveq   #0, d0
+4:  addi.w  #TOP_LINE, d0
     move.w  d0, VDP_DATA
     rts
