@@ -4,20 +4,41 @@ A port of Data East's 1988 arcade game *RoboCop* to the Sega Mega Drive / Genesi
 
 The plan is the one used for [Cadillacs and Dinosaurs MD](https://github.com/Evilu/cadillacs-and-dinosaurs-md): the Mega Drive runs Data East's own 68000 program, and only the hardware layer underneath it is replaced (video, palettes, input, sound, the protection processor, memory map). The goal is the whole game, as close to the arcade as the console allows.
 
-**Status: research.** Nothing builds yet. The arcade machine and the game program have been measured for attract mode, stage 1 and the start of stage 2; the findings and the plan are in `docs/`.
+**Status: the arcade program runs on the Mega Drive in an emulator, with no picture or sound yet.** The game boots, takes a coin, plays stage 1 and into stage 2 under scripted input, and enemies hit the player through our replacement for the board's protection processor. Drawing it is the next milestone.
 
 What the research found, in short:
 
 - The arcade's 68000 runs at 10 MHz but waits for more than half of every game step; the game's real work is about a third of what a Mega Drive has.
 - The game's RAM sits inside the console's RAM at the same addresses, and the whole game is about 1.3 MB: no mapper is needed.
-- The board's protection is a second processor (a HuC6280) that runs hit detection and decides the order of the main loop. Its 924-byte program is stored in the 68000 ROM, so it can be read and rewritten.
+- The board's protection is a second processor (a HuC6280) that runs hit detection and decides the order of the main loop. Its 924-byte program is stored in the 68000 ROM, so it can be read and rewritten; our 68000 version gives the same results as the original on every game step we captured.
 - The picture is 256 pixels wide, which the console has a mode for. What does not fit is sprites per line in crowded moments, the 16 extra lines of height, and about 25 arcade palettes into 4.
 
 ## ROMs
 
-This repository contains no ROM data. To build, you will supply your own dump of the arcade ROM set: you bring a copy of the game you own, and the build turns it into a Mega Drive ROM on your own machine.
+This repository contains no ROM data. To build, you supply your own dump of the arcade ROM set: you bring a copy of the game you own, and the build turns it into a Mega Drive ROM on your own machine.
 
-The set is MAME's `robocop` (*Robocop*, World, revision 4).
+## What you need
+
+- **Your own dump of the arcade game:** MAME's `robocop` set (*Robocop*, World, revision 4), as `robocop.zip` or as a folder of its files. The build checks the four program ROMs by size and CRC32 and tells you which one is missing or wrong. Other revisions and regions (`robocopw`, `robocopj`, `robocopu`, the bootlegs) are not supported.
+- **Python 3.9 or newer**, with `capstone` (`requirements.txt`).
+- **GNU binutils for the 68000** (`as`, `ld`, `objcopy`, `nm`):
+  - macOS: `brew install m68k-elf-binutils`
+  - Debian / Ubuntu: `sudo apt install binutils-m68k-linux-gnu`
+  - other: any 68000 binutils; set `M68K_PREFIX` to the tool prefix (for example `M68K_PREFIX=m68k-linux-gnu-`).
+
+## Build
+
+```sh
+git clone https://github.com/Evilu/robocop-md.git
+cd robocop-md
+python3 -m venv .venv
+.venv/bin/python3 -m pip install -r requirements.txt
+.venv/bin/python3 build_md.py /path/to/robocop.zip
+```
+
+The ROM is written to `out/robocop_md.md` (512 KB, no mapper); a second argument chooses another path. The built ROM contains Data East's program: do not share it.
+
+There is nothing to see in it yet: the screen stays black while the game runs underneath. Pad: **A** inserts a coin, **Start** starts, **B** attacks, **C** jumps. It has only been run in MAME. Do not try it on a real console yet.
 
 ## Development
 

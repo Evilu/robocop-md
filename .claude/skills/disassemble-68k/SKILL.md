@@ -20,14 +20,14 @@ If the listing is nonsense, the address is mid-instruction or in data: try the n
 ## Static code and hardware map
 
 ```sh
-analysis/venv/bin/python3 -I tools/analysis/codemap.py analysis/work/robocop_prg.bin analysis/out/robocop_prg --tables
+analysis/venv/bin/python3 -I tools/analysis/codemap.py analysis/work/robocop_prg.bin analysis/out/robocop_map --tables
 ```
 
 Follows the code from the vectors and writes `functions.tsv` (call targets), `code.tsv` (runs of decoded code) and `access.tsv` (every instruction with an absolute hardware address, by region). `--tables` also follows tables of long pointers and can take data for code: check a surprising entry with `dis68k.py`.
 
 ## Ghidra output
 
-`analysis/out/<image>/functions.tsv` (address, size, callers, callees) and `decomp.c`. Regenerate with `tools/ghidra/analyze.sh <ghidra dir> analysis/work/robocop_prg.bin dec0 - analysis` then `reanalyze.sh` (see `tools/README.md`); set `JAVA_HOME` to a Java 21 runtime.
+`analysis/out/<image>/functions.tsv` (address, size, callers, callees) and `decomp.c`. Regenerate with `tools/ghidra/analyze.sh <ghidra dir> analysis/work/robocop_prg.bin dec0 - analysis` then `reanalyze.sh` (see `tools/README.md`); set `JAVA_HOME` to a Java 25 runtime (Ghidra 12.2 refuses 21); with Homebrew the Ghidra directory is `/opt/homebrew/opt/ghidra/libexec`.
 
 ## How the arcade code is laid out
 

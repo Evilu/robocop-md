@@ -66,7 +66,7 @@ def main():
     print(f'\nper-address totals: {total} samples; wait loops {idle / total * 100:.1f}%, '
           f'HuC6280 {sub / total * 100:.1f}%, real work {real / total * 100:.1f}%')
 
-    starts = sorted(int(line.split('\t')[0], 16) for line in open(a.functions))
+    starts = sorted(int(line.split('\t')[0], 16) for line in open(a.functions) if line[:1] in '0123456789abcdef')
     targets = sorted(k for k in incl if k > 0)
 
     def owner(pc):

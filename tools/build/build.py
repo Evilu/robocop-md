@@ -1,0 +1,204 @@
+"""Build the Mega Drive ROM from the arcade program image.
+
+usage: build.py <robocop_prg.bin> <out.md>
+
+Takes the 256 KB arcade 68000 program, redirects its hardware addresses to
+copies in work RAM, replaces the vectors and the header page, replaces the
+exchanges with the HuC6280, and appends the hardware layer assembled from src/.
+"""
+import os
+import struct
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+from capstone import CS_ARCH_M68K, CS_MODE_BIG_ENDIAN, CS_MODE_M68K_000, Cs
+
+ROOT = Path(__file__).resolve().parents[2]
+PREFIX = os.environ.get('M68K_PREFIX', 'm68k-elf-')
+PRG_SIZE = 0x40000
+HAL_BASE = 0x40000
+ROM_SIZE = 0x80000
+TRAMPOLINE = 0x200
+
+RELOCATIONS = [
+    (0x180000, 0x181000, 0xff1000),
+    (0x240000, 0x240020, 0xff0800),
+    (0x242000, 0x244000, 0xff2000),
+    (0x244000, 0x246000, 0xff6000),
+    (0x246000, 0x246020, 0xff0820),
+    (0x248000, 0x248800, 0xff5800),
+    (0x24a000, 0x24a800, 0xff4800),
+    (0x24c000, 0x24c020, 0xff0840),
+    (0x24c800, 0x24d000, 0xffc800),
+    (0x24d000, 0x24d800, 0xff5000),
+    (0x24e000, 0x24e800, 0xffc800),
+    (0x30c000, 0x30c020, 0xff0860),
+    (0x310000, 0x310800, 0xff0000),
+    (0x314000, 0x314800, 0xff4000),
+]
+LIMIT_OPS = ('cmpa', 'cmpi', 'cmp.')
+DATA_FROM = 0x240000
+LOOSE_DATA = [(0x242000, 0x246000), (0x24a000, 0x24a800), (0x24d000, 0x24d800)]
+
+
+def relocate(addr, limit=False):
+    if limit:
+        for lo, hi, to in RELOCATIONS:
+            if addr == hi:
+                return to + hi - lo
+    for lo, hi, to in RELOCATIONS:
+        if lo <= addr < hi:
+            return to + addr - lo
+    return None
+
+
+def assemble():
+    sources = sorted((ROOT / 'src').glob('*.s'))
+    with tempfile.TemporaryDirectory() as tmp:
+        elf, out = Path(tmp) / 'hal.elf', Path(tmp) / 'hal.bin'
+        objects = []
+        for src in sources:
+            obj = Path(tmp) / (src.stem + '.o')
+            subprocess.run([PREFIX + 'as', '-m68000', '--register-prefix-optional', '-I', str(ROOT / 'src'),
+                            str(src), '-o', str(obj)], check=True)
+            objects.append(str(obj))
+        subprocess.run([PREFIX + 'ld', '-Ttext', hex(HAL_BASE), '-e', hex(HAL_BASE), '-o', str(elf)] + objects,
+                       check=True)
+        subprocess.run([PREFIX + 'objcopy', '-O', 'binary', str(elf), str(out)], check=True)
+        nm = subprocess.run([PREFIX + 'nm', str(elf)], check=True, capture_output=True, text=True).stdout
+        symbols = {line.split()[2]: int(line.split()[0], 16) for line in nm.splitlines() if len(line.split()) == 3}
+        return out.read_bytes(), symbols
+
+
+def header(rom_end):
+    h = bytearray(b' ' * 0x100)
+
+    def put(off, text, size):
+        h[off:off + size] = text.encode().ljust(size)[:size]
+
+    put(0x00, 'SEGA MEGA DRIVE', 16)
+    put(0x10, '(C)     2026.NOV', 16)
+    put(0x20, 'ROBOCOP MD - RESEARCH BUILD', 48)
+    put(0x50, 'ROBOCOP MD - RESEARCH BUILD', 48)
+    put(0x80, 'GM 00000000-00', 14)
+    put(0x90, 'J', 16)
+    h[0xa0:0xb0] = struct.pack('>4I', 0, rom_end, 0xff0000, 0xffffff)
+    put(0xf0, 'JUE', 16)
+    return h
+
+
+def expect(rom, off, data):
+    found = bytes(rom[off:off + len(data)])
+    if found != data:
+        sys.exit(f'{off:06x}: expected {data.hex()}, found {found.hex()}: not the robocop revision 4 program')
+
+
+def build(program, out_path):
+    if len(program) != PRG_SIZE:
+        sys.exit('expected the 256 KB robocop program image')
+    rom = bytearray(program)
+    hal, sym = assemble()
+    report, done = [], set()
+
+    def patch(off, old, new, what):
+        expect(rom, off, old)
+        rom[off:off + len(new)] = new
+        done.update(range(off, off + max(len(old), len(new))))
+        report.append(f'{off:06x}: {what}')
+
+    jump = lambda name: b'\x4e\xf9' + struct.pack('>I', sym[name])
+    call = lambda name: b'\x4e\xb9' + struct.pack('>I', sym[name])
+    patch(0x35a8, b'\x00\x80', b'\x00\x81', 'main loop sync: store the HuC6280\'s answer directly')
+    patch(0x3eee, bytes.fromhex('13fc000100180003'), jump('hal_sequence') + b'\x4e\x71',
+          'routine sequencer replaced')
+    patch(0x7630, bytes.fromhex('4279001 80ffe'.replace(' ', '')), call('hal_hit'),
+          'HuC6280 interrupt replaced by a call to the hit detection')
+    patch(TRAMPOLINE, bytes(rom[TRAMPOLINE:TRAMPOLINE + 6]), jump('hal_restart'), 'restart trampoline')
+    for site in (0x36da, 0x3830):
+        expect(rom, site, b'\x4e\xfa' + struct.pack('>h', 0x1bc - (site + 2)))
+        patch(site, bytes(rom[site:site + 4]), b'\x4e\xfa' + struct.pack('>h', TRAMPOLINE - (site + 2)),
+              'restart jump re-aimed at the trampoline')
+
+    md = Cs(CS_ARCH_M68K, CS_MODE_BIG_ENDIAN | CS_MODE_M68K_000)
+    moved, limits, skipped = 0, [], []
+    for off in range(0x22c, PRG_SIZE - 4, 2):
+        if off in done:
+            continue
+        value = struct.unpack_from('>I', rom, off)[0]
+        if relocate(value) is None and relocate(value, True) is None:
+            continue
+        for start in (off - 2, off - 4, off - 6):
+            ins = next(md.disasm(bytes(rom[start:start + 12]), start), None)
+            if not ins or start + ins.size < off + 4:
+                continue
+            if f'${value:x}.l' not in ins.op_str and f'#${value:x}' not in ins.op_str:
+                continue
+            limit = ins.mnemonic.startswith(LIMIT_OPS) and f'#${value:x}' in ins.op_str
+            target = relocate(value, limit)
+            if target is None:
+                break
+            if limit and target != relocate(value):
+                limits.append(f'{start:06x} {ins.mnemonic} {ins.op_str} -> {target:06x}')
+            struct.pack_into('>I', rom, off, target)
+            done.update(range(off, off + 4))
+            moved += 1
+            break
+        else:
+            if relocate(value) is not None:
+                skipped.append((off, value))
+    report.append(f'{moved} hardware addresses redirected')
+
+    def decodes(start, size):
+        ins = next(md.disasm(bytes(rom[start:start + 12]), start), None)
+        return ins is not None and ins.size == size
+
+    pointer = lambda value: not value & 1 and value >= DATA_FROM and relocate(value) is not None
+    candidates = {off for off, value in skipped if pointer(value)}
+    tables, loose = 0, []
+    for off, value in sorted(skipped):
+        if off not in candidates:
+            continue
+        after_code = struct.unpack_from('>H', rom, off - 2)[0] in (0x4e75, 0x4e71)
+        certain = after_code or off - 4 in candidates or off + 4 in candidates
+        if not certain:
+            if not any(lo <= value < hi for lo, hi in LOOSE_DATA):
+                continue
+            if struct.unpack_from('>H', rom, off - 2)[0] < 0xfffe and (decodes(off - 2, 4) or decodes(off - 4, 6)):
+                continue
+            loose.append(f'{off:06x}:{value:06x}')
+        struct.pack_into('>I', rom, off, relocate(value))
+        done.update(range(off, off + 4))
+        tables += 1
+    skipped = [f'{off:06x}:{value:06x}' for off, value in skipped if off not in done]
+    report.append(f'{tables} more in data: long pointers after a routine or in a run of pointers')
+    report.append(f'{len(loose)} of those are single pointers: ' + ' '.join(loose))
+    report.append(f'{len(limits)} compare limits at the end of a range:')
+    report += ['  ' + line for line in limits]
+    report.append(f'{len(skipped)} values in hardware ranges left alone (not an instruction operand)')
+
+    vectors = [0xffc000, sym['hal_boot']] + [sym['hal_crash']] * 62
+    for i in range(25, 32):
+        vectors[i] = sym['hal_ignore']
+    vectors[30] = sym['hal_vblank']
+    struct.pack_into('>64I', rom, 0, *vectors)
+    rom[0x100:0x200] = header(ROM_SIZE - 1)
+
+    rom += hal
+    if len(rom) > ROM_SIZE:
+        sys.exit('hardware layer does not fit')
+    rom += b'\xff' * (ROM_SIZE - len(rom))
+    checksum = sum(struct.unpack_from(f'>{(len(rom) - 0x200) // 2}H', rom, 0x200)) & 0xffff
+    struct.pack_into('>H', rom, 0x18e, checksum)
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(rom)
+    report.append(f'hardware layer: {len(hal)} bytes at {HAL_BASE:06x}; ROM {len(rom)} bytes -> {out_path}')
+    print('\n'.join(report))
+    return skipped
+
+
+if __name__ == '__main__':
+    build(Path(sys.argv[1]).read_bytes(), sys.argv[2])

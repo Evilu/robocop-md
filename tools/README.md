@@ -2,7 +2,7 @@
 
 Scripts used for the findings in [`docs/`](../docs). They work on ROM sets you supply; nothing here contains game data. Output goes to `analysis/`, which git ignores.
 
-Requirements: Python 3 with `capstone` and Pillow (`python3 -m venv analysis/venv`, then install `requirements.txt` and `pillow` into it), MAME (0.289 tested, `brew install mame`), and for decompilation Ghidra 12 with a Java 21 runtime.
+Requirements: Python 3 with `capstone` and Pillow (`python3 -m venv analysis/venv`, then install `requirements.txt` and `pillow` into it), MAME (0.289 tested, `brew install mame`), and for decompilation Ghidra 12.2 with the Java runtime it asks for (25; it refuses 21).
 
 ## 1. Prepare images
 
@@ -18,7 +18,7 @@ This writes the flat 68000 program (`robocop_prg.bin`, the two even/odd ROM pair
 
 ```sh
 analysis/venv/bin/python3 -I tools/analysis/dis68k.py analysis/work/robocop_prg.bin 1002:60
-analysis/venv/bin/python3 -I tools/analysis/codemap.py analysis/work/robocop_prg.bin analysis/out/robocop_prg --tables
+analysis/venv/bin/python3 -I tools/analysis/codemap.py analysis/work/robocop_prg.bin analysis/out/robocop_map --tables
 tools/ghidra/analyze.sh <ghidra dir> analysis/work/robocop_prg.bin dec0 - analysis
 tools/ghidra/analyze.sh <ghidra dir> analysis/work/robocop_md.bin  md   - analysis
 tools/ghidra/reanalyze.sh <ghidra dir> robocop_prg analysis
@@ -32,7 +32,7 @@ tools/ghidra/reanalyze.sh <ghidra dir> robocop_prg analysis
 | `ghidra/SeedCalls.java` | Second pass: disassembles at absolute `JSR`/`JMP` targets and at `LEA`/`PEA` targets that look like code |
 | `ghidra/ExportC.java` | Writes `functions.tsv` and `decomp.c` to `analysis/out/<image>/` |
 
-Set `JAVA_HOME` to the Java 21 runtime before the Ghidra scripts. The HuC6280's program is disassembled with MAME's debugger (see the `disassemble-68k` skill): capstone and Ghidra's 6502 modes do not know its extra instructions.
+Set `JAVA_HOME` to that Java runtime before the Ghidra scripts (`/opt/homebrew/opt/openjdk@25` and `/opt/homebrew/opt/ghidra/libexec` with Homebrew). The HuC6280's program is disassembled with MAME's debugger (see the `disassemble-68k` skill): capstone and Ghidra's 6502 modes do not know its extra instructions.
 
 ## 3. Trace the arcade in MAME
 
@@ -75,7 +75,7 @@ TRACE_OUT=rc_prof TRACE_FRAMES=21600 PROFILE_FROM=300 HOLD="ffb242=28" \
   IDLE="17ba-17cc,17e8-17fa,1156-1166" SUBWAIT="3ef6-3f02,3f2a-3f36,763e-7646,35ae-35ba,7620-762a,7680-768a" \
   mame robocop -rompath roms -video none -sound none -skip_gameinfo -nothrottle \
   -seconds_to_run 400 -autoboot_script ../../tools/mame/dec0_profile.lua
-python3 -I ../../tools/analysis/profile_report.py rc_prof ../out/robocop_prg/functions.tsv --from 300 --to 5400
+python3 -I ../../tools/analysis/profile_report.py rc_prof ../out/robocop_map/functions.tsv --from 300 --to 5400
 ```
 
 `profile_report.py` prints real work, HuC6280 service and wait time per pair of frames (the game logic runs every other frame), and the hottest routines. The address ranges end one instruction past each loop: MAME's sampled program counter is ahead by one.
@@ -87,3 +87,28 @@ tools/check_md.sh <rom.bin> <out dir> [frames] [snapshot every N frames]
 ```
 
 Runs the ROM headless in MAME's `genesis` driver (through `tools/run_md.sh`) and reports whether the CPU is running, plus picture width, sprites, colours, the largest per-frame DMA and sprite-limit overflow. Snapshots and VDP dumps land in the output folder, with `md_vram_free.txt` listing the VRAM patterns never written after `WATCH_FROM` (default frame 300). `TRACE_INPUT=start` presses Start and plays (it reaches stage 1 of the demo); `RAM_WATCH=lo-hi` adds the lowest address written in that range. BlastEm or ares are the choice for hands-on testing; they need a window.
+
+## 7. Build and probe the Mega Drive ROM
+
+```sh
+analysis/venv/bin/python3 -I build_md.py robocop.zip test/roms/md/robocop_md.md
+cd analysis/mame && mkdir -p port && cd port
+TRACE_OUT=. TRACE_FRAMES=9000 STATE_EVERY=1500 TRACE_INPUT=play HOLD="ffb242=28" \
+  mame genesis -cart ../../../test/roms/md/robocop_md.md -video none -sound none -skip_gameinfo -nothrottle \
+  -seconds_to_run 200 -autoboot_script ../../../tools/mame/md_state.lua
+```
+
+`build.py` needs `capstone` and the `m68k-elf` binutils (`M68K_PREFIX` names another prefix) and prints what it patched. `md_state.lua` prints the arcade program's step counter, player position, energy, object count and scroll while playing the blind script (`TRACE_INPUT=play`) or pressing buttons at given frames (`PRESS="700:A,800:Start"`), and writes `stray_access.csv`: every access to an arcade hardware address the build failed to redirect. It should hold only its header line.
+
+## 8. Check the hit detection
+
+```sh
+cd analysis/mame && mkdir -p hit_arcade hit_md
+TRACE_OUT=hit_arcade TRACE_FRAMES=5400 mame robocop -rompath roms -video none -sound none -skip_gameinfo -nothrottle \
+  -seconds_to_run 200 -autoboot_script ../../tools/mame/hit_capture.lua
+TRACE_OUT=hit_md TRACE_FRAMES=5400 mame genesis -cart ../../test/roms/md/robocop_md.md -video none -sound none \
+  -skip_gameinfo -nothrottle -seconds_to_run 200 -autoboot_script ../../tools/mame/hit_capture.lua
+python3 -I ../../tools/analysis/hit_model.py ../work/robocop_prg.bin hit_arcade/hit_capture.bin hit_md/hit_capture.bin
+```
+
+`hit_capture.lua` records the dual-port RAM (or its stand-in on the Mega Drive) before and after each hit detection pass. `hit_model.py` runs a model of the HuC6280's routine on each input and counts outputs that differ: the arcade capture checks the model against the real HuC6280 program, the Mega Drive capture checks the port's routine against the model.
