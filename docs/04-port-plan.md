@@ -241,3 +241,13 @@ Not checked, and likely wrong in places:
 - **CPU time**: stage 1 runs 6% slow; comparing a tile map each update and renumbering tile pixels are the main costs left.
 - **The music arrangement**: twelve FM voices on two chip types into six.
 - **Everything after stage 1** is unmeasured.
+
+## The attract sequence
+
+Checked against arcade snapshots taken at matching points, in MAME and in ares.
+
+- High-score page: the table and the portrait behind it are drawn. The portrait's palette pulses through black; the scene is kept across black when its maps are unchanged.
+- Story pages, the three pictures and the title logo are drawn with the arcade's colours: each of these scenes uses few enough palettes for every pen to have its own line colour.
+- The title sets the priority register to 6. The logo's face is sprites behind layer 2, so layer 2 is drawn with high-priority cells while bit 1 is set.
+- Not right yet: the white flash on the title lasts longer than the arcade's and loses some text; at the end of the title the static of layer 3 shows in a band behind the whole logo, where the arcade shows it only inside the letters (not understood: on the arcade both layers hold the same tiles as here).
+

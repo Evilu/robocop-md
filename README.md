@@ -65,9 +65,8 @@ Everything here was seen in MAME or ares in the attract sequence, stage 1 and th
 - The top 8 and bottom 8 lines of the arcade picture are cut off; the score is on the very top line.
 - When more than 16 sprites share a line, or the HUD and the game's sprites together exceed 64, some disappear for a frame.
 - In the stages only 20 blocks of text fit, enough for the HUD; longer messages over a stage would be cut.
-- High-score page: the portrait behind the table is missing in ares and some entries are incomplete.
-- The story pages before the title were black in ares.
-- The title logo shows speckles.
+- Title: the white flash lasts longer than on the arcade and some of the text is missing during it; at the end of the title the static shows in a band behind the whole logo, where the arcade shows it only inside the letters.
+- A scene change in the attract sequence can show a few stray blocks for a frame (seen in ares).
 
 **Hardware**
 - Never run on a real console or flash cart. Do not try yet.

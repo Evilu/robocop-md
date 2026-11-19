@@ -128,7 +128,20 @@ spr_entry:
     btst    #0, spr_stamp + 1
     bne.s   6f
     move.w  #1, spr_skip
-6:  move.w  d1, d2
+6:  tst.w   bg_front
+    beq.s   spr_behind
+    btst    #2, IO + 0x11
+    beq.s   spr_low_palettes
+    tst.w   d1
+    bmi.s   spr_behind
+    bra.s   spr_in_front
+spr_low_palettes:
+    tst.w   d1
+    bpl.s   spr_behind
+spr_in_front:
+    ori.w   #0x8000, d5
+spr_behind:
+    move.w  d1, d2
     rol.w   #4, d2
     andi.w  #15, d2
     bsr.w   palette_line

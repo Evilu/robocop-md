@@ -48,6 +48,9 @@
     .equ bg_hold,       BG_VARS + 50    | a scene's palette has arrived: latches left before it is built regardless
     .equ bg_bad,        BG_VARS + 52    | the colour tables have gone wrong: latches left before a rebuild regardless
     .equ HOLD_LATCHES,  12
+    .equ BG_KNOWN,      0xff1070    | per layer: the palettes whose pens have a line colour each, or all ones
+    .equ bg_front,      BG_VARS + 62    | 0x8000 while the arcade draws some sprites behind layer 2
+    .equ BG_SIGNATURE,  BG_VARS + 54    | per layer: palettes its map used and the map's checksum when its colours were chosen
     .equ NEAR,          1
     .equ CANDIDATES,    0xff1300    | 256 words: a palette block as console colours
     .equ FARNESS,       0xff1500    | 256 bytes: each one's distance from the colours chosen so far
@@ -150,7 +153,17 @@ bg_reset:
     bra.w   text_invalidate
 
 bg_update:
-    bsr.w   bg_palette_check
+    moveq   #0, d0
+    btst    #1, IO + 0x11
+    beq.s   1f
+    move.w  #0x8000, d0
+1:  cmp.w   bg_front, d0
+    beq.s   2f
+    move.w  d0, bg_front
+    lea     BG_LAYER2, a5
+    bsr.w   bg_layer_invalidate
+2:  bsr.w   bg_palette_check
+    bsr.w   bg_palette_wait
     tst.w   bg_dark
     bne.w   5f
     tst.w   bg_hold
@@ -357,8 +370,10 @@ bg_draw:
     lsl.w   #2, d4
     addi.w  #BG_PATTERNS + 0x4000, d4
     tst.w   d5
-    beq.s   1f
-    addi.w  #0x2000, d4
+    bne.s   9f
+    or.w    bg_front, d4
+    bra.s   1f
+9:  addi.w  #0x2000, d4
 1:  move.w  d7, d0
     lsr.w   #1, d0
     move.w  d0, d1
@@ -580,7 +595,8 @@ colour9:
     or.w    d1, d2
     rts
 
-| d0 = palette number (0-15 layer 2, 16-31 layer 3).
+| d0 = palette number (0-15 layer 2, 16-31 layer 3, 32 up the text, which uses the line
+| of the layer whose plane it is on, or line 2 when it is drawn with sprites).
 | Returns a3 = the layer's line, a4 = its owner table, a5 = its count, and sets bg_first and bg_capacity.
 bg_line_for:
     lea     BG_LINE, a3
@@ -590,16 +606,16 @@ bg_line_for:
     move.w  #1, bg_first
     move.w  #15, bg_capacity
     cmpi.w  #32, d0
-    bhs.s   1f
-    cmpi.w  #16, d0
-    bhs.s   2f
-    cmpi.w  #TEXT_RESERVE, bg_text_colours
-    bhs.s   1f
-    move.w  #15 - TEXT_RESERVE, bg_capacity
-    move.w  bg_text_colours, d1
-    add.w   d1, bg_capacity
+    blo.s   3f
+    cmpi.w  #0xe000, text_plane
+    bne.s   1f
+    lea     32(a3), a3
+    lea     32(a4), a4
+    addq.l  #2, a5
+    move.l  #BG_FULL + 64, bg_full_base
     rts
-2:
+3:  cmpi.w  #16, d0
+    blo.s   1f
     lea     32(a3), a3
     lea     32(a4), a4
     addq.l  #2, a5
@@ -629,7 +645,19 @@ bg_lut_build:
     bra.s   2f
 1:  lea     BG_LUT_OK, a2
     st      (a2, d0.w)
+    lea     BG_KNOWN, a2
     move.w  d0, d7
+    lsr.w   #3, d7
+    andi.w  #2, d7
+    move.w  (a2, d7.w), d7
+    move.w  d0, d6
+    andi.w  #15, d6
+    btst    d6, d7
+    bne.s   3f
+    tst.w   bg_bad
+    bne.s   3f
+    move.w  #2, bg_bad
+3:  move.w  d0, d7
     lsl.w   #5, d7
     lea     BG_PALETTES, a0
     adda.w  d7, a0
@@ -653,7 +681,19 @@ bg_lut_pen:
     beq.s   1f
     clr.b   (a2)+
     bra.w   bg_lut_next
-1:  move.w  bg_first, d4
+1:  move.l  a0, d0
+    subi.l  #BG_PALETTES + 2, d0
+    move.w  bg_first, d4
+    move.w  d4, d1
+    add.w   d1, d1
+    lea     (a4, d1.w), a6
+    move.w  (a5), d3
+    bra.s   3f
+2:  cmp.w   (a6)+, d0
+    beq.w   bg_lut_got
+    addq.w  #1, d4
+3:  dbra    d3, 2b
+    move.w  bg_first, d4
     move.w  d4, d0
     lsl.w   #2, d0
     movea.l bg_full_base, a6
@@ -704,80 +744,144 @@ bg_lut_next:
     movem.l (sp)+, d0-d7/a0-a6
     rts
 
-| d0 = 0 (layer 2) or 16 (layer 3). Fills that layer's palette line from its
-| whole block of 16 arcade palettes: starting from black if the block has it, the colour
-| farthest from all those already chosen is added until the line is full or
-| every colour in the block is on it. Hues that stand apart get a place however
-| late their tiles come into view; close shades share.
+| d0 = 0 (layer 2) or 16 (layer 3). Returns in d5 the arcade palettes that layer's
+| map uses (blank tiles apart) and in d4 a checksum of the map.
+bg_map_signature:
+    lea     L2_MAP, a2
+    tst.w   d0
+    beq.s   1f
+    lea     L3_MAP, a2
+1:  moveq   #0, d5
+    moveq   #0, d4
+    lea     GFX_BLANK, a6
+    move.w  #1023, d3
+2:  move.w  (a2)+, d1
+    add.w   d1, d4
+    rol.w   #1, d4
+    move.w  d1, d2
+    andi.w  #0x07ff, d2
+    tst.w   d0
+    beq.s   3f
+    andi.w  #0x03ff, d2
+    addi.w  #L3_TILES, d2
+3:  tst.b   (a6, d2.w)
+    bne.s   4f
+    rol.w   #4, d1
+    andi.w  #15, d1
+    bset    d1, d5
+4:  dbra    d3, 2b
+    rts
+
+| Z set when both maps are as they were when their colours were chosen.
+bg_scene_same:
+    moveq   #0, d0
+    bsr.s   bg_map_signature
+    lea     BG_SIGNATURE, a0
+    cmp.w   (a0), d5
+    bne.s   1f
+    cmp.w   2(a0), d4
+    bne.s   1f
+    moveq   #16, d0
+    bsr.s   bg_map_signature
+    lea     BG_SIGNATURE, a0
+    cmp.w   4(a0), d5
+    bne.s   1f
+    cmp.w   6(a0), d4
+1:  rts
+
+| d0 = 0 (layer 2) or 16 (layer 3). Fills that layer's palette line from the
+| arcade palettes its map uses. If their pens fit on the line each gets a colour
+| of its own, whatever it is at the moment: such a scene follows any fade or
+| palette animation exactly. Otherwise, starting from black if there is one, the
+| colour farthest from all those already chosen is added until the line is
+| full: hues that stand apart get a place however late their tiles come into
+| view, close shades share.
 bg_choose_colours:
     bsr.w   bg_line_for
+    move.w  #15, bg_capacity
+    tst.w   text_plane
+    bne.s   9f
     move.w  #15 - TEXT_RESERVE, bg_capacity
-    lea     BG_PALETTES, a0
+9:  lea     BG_PALETTES, a0
     lea     BG_BLUES, a1
     tst.w   d0
     beq.s   1f
     move.w  #16, bg_capacity
     lea     0x200(a0), a0
     lea     0x200(a1), a1
-1:  lea     CANDIDATES, a2
+1:  bsr.w   bg_map_signature
+    lea     BG_SIGNATURE, a2
+    move.w  d0, d1
+    lsr.w   #2, d1
+    move.w  d5, (a2, d1.w)
+    move.w  d4, 2(a2, d1.w)
+    lea     CANDIDATES, a2
     lea     FARNESS, a6
-    move.w  #255, d3
-2:  move.w  (a0)+, d0
+    moveq   #0, d6
+    moveq   #0, d7
+3:  move.w  (a0)+, d0
     move.w  (a1)+, d1
     bsr.w   colour9
     move.w  d2, (a2)+
-    move.b  #0x7f, (a6)+
-    dbra    d3, 2b
-    moveq   #0, d4
+    moveq   #0, d1
+    move.w  d7, d0
+    lsr.w   #4, d0
+    btst    d0, d5
+    beq.s   5f
+    move.w  d7, d0
+    andi.w  #15, d0
+    bne.s   4f
     tst.w   bg_first
-    beq.s   4f
-    lea     FARNESS, a6
-    moveq   #15, d3
-3:  clr.b   (a6)
-    lea     16(a6), a6
-    dbra    d3, 3b
-    moveq   #1, d4
-4:  lea     CANDIDATES, a2
-    lea     FARNESS, a6
-    moveq   #0, d3
-5:  tst.b   (a6)+
-    beq.s   6f
-    tst.w   (a2)
+    bne.s   5f
+4:  moveq   #0x7f, d1
+    addq.w  #1, d6
+5:  move.b  d1, (a6)+
+    addq.w  #1, d7
+    cmpi.w  #256, d7
+    bne.s   3b
+    clr.w   (a5)
+    lea     BG_KNOWN, a2
+    tst.w   bg_first
     bne.s   6f
+    addq.l  #2, a2
+6:  move.w  #-1, (a2)
+    cmp.w   bg_capacity, d6
+    bhi.s   bg_choose_far
+    move.w  d5, (a2)
+    moveq   #0, d4
+7:  lea     FARNESS, a6
+    tst.b   (a6, d4.w)
+    beq.s   8f
+    bsr.w   bg_choose_take
+8:  addq.w  #1, d4
+    cmpi.w  #256, d4
+    bne.s   7b
+    bra.w   bg_choose_done
+bg_choose_far:
+    lea     CANDIDATES, a2
+    lea     FARNESS, a6
+    moveq   #-1, d4
+    moveq   #0, d3
+1:  tst.b   (a6)+
+    beq.s   3f
+    tst.w   d4
+    bpl.s   2f
     move.w  d3, d4
-    bra.s   7f
-6:  addq.l  #2, a2
+2:  tst.w   (a2)
+    bne.s   3f
+    move.w  d3, d4
+    bra.s   bg_choose_next
+3:  addq.l  #2, a2
     addq.w  #1, d3
     cmpi.w  #256, d3
-    bne.s   5b
-7:  clr.w   (a5)
+    bne.s   1b
+    tst.w   d4
+    bmi.w   bg_choose_done
 bg_choose_next:
     move.w  (a5), d0
     cmp.w   bg_capacity, d0
     bhs.w   bg_choose_done
-    add.w   bg_first, d0
-    addq.w  #1, (a5)
-    move.w  d4, d1
-    add.w   d1, d1
-    lea     CANDIDATES, a2
-    move.w  (a2, d1.w), d2
-    move.w  d0, d3
-    add.w   d3, d3
-    move.w  d2, (a3, d3.w)
-    tst.w   bg_first
-    bne.s   1f
-    addi.w  #0x200, d1
-1:  move.w  d1, (a4, d3.w)
-    lea     BG_PALETTES, a0
-    lea     BG_BLUES, a1
-    movea.l bg_full_base, a2
-    add.w   d3, d3
-    move.w  (a0, d1.w), (a2, d3.w)
-    move.w  (a1, d1.w), d0
-    andi.w  #0x00ff, d0
-    move.w  d0, 2(a2, d3.w)
-    lea     FARNESS, a6
-    clr.b   (a6, d4.w)
+    bsr.w   bg_choose_take
     move.w  d2, d5
     andi.w  #0x00e, d5
     move.w  d2, d6
@@ -828,6 +932,34 @@ bg_choose_next:
     bra.w   bg_choose_next
 bg_choose_done:
     move.w  #1, bg_line_dirty
+    rts
+
+| d4 = a colour's place in the palette block. Puts it on the line as the next colour; returns it in d2.
+bg_choose_take:
+    move.w  (a5), d0
+    add.w   bg_first, d0
+    addq.w  #1, (a5)
+    move.w  d4, d1
+    add.w   d1, d1
+    lea     CANDIDATES, a2
+    move.w  (a2, d1.w), d2
+    move.w  d0, d3
+    add.w   d3, d3
+    move.w  d2, (a3, d3.w)
+    tst.w   bg_first
+    bne.s   1f
+    addi.w  #0x200, d1
+1:  move.w  d1, (a4, d3.w)
+    lea     BG_PALETTES, a0
+    lea     BG_BLUES, a1
+    movea.l bg_full_base, a2
+    add.w   d3, d3
+    move.w  (a0, d1.w), (a2, d3.w)
+    move.w  (a1, d1.w), d0
+    andi.w  #0x00ff, d0
+    move.w  d0, 2(a2, d3.w)
+    lea     FARNESS, a6
+    clr.b   (a6, d4.w)
     rts
 
 | d2 = console colour, a3 = the layer's line, a5 = its count. Returns the closest
@@ -915,15 +1047,15 @@ bg_palette_check:
     move.w  #SETTLE_LATCHES, bg_settle
     tst.w   d3
     bne.s   1f
-    tst.w   bg_dark
-    bne.w   bg_palette_same
-    bsr.w   bg_reset
     move.w  #1, bg_dark
-    clr.w   bg_loading
     rts
 1:  tst.w   bg_dark
     beq.s   2f
     clr.w   bg_dark
+    tst.w   bg_hold
+    bne.w   bg_palette_same
+    bsr.w   bg_scene_same
+    beq.s   2f
     move.w  #HOLD_LATCHES, bg_hold
     rts
 2:  tst.w   bg_hold
@@ -934,16 +1066,18 @@ bg_palette_check:
     bsr.w   bg_line_refresh
     move.w  #1, bg_line_dirty
     bsr.w   text_validate
-    bsr.s   bg_validate
-    bls.s   bg_palette_wait
+    bsr.w   bg_validate
+    bls.w   bg_palette_same
     tst.w   bg_bad
-    bne.s   bg_palette_wait
+    bne.w   bg_palette_same
     move.w  #HOLD_LATCHES, bg_bad
-    bra.s   bg_palette_wait
+    rts
 bg_palette_quiet:
     tst.w   bg_settle
-    beq.s   bg_palette_wait
+    beq.w   bg_palette_same
     subq.w  #1, bg_settle
+    rts
+
 | A scene whose palette has just arrived, or whose colour tables have gone
 | wrong, is built afresh once the palette has been still for a few latches, or
 | after HOLD_LATCHES if it never is (some scenes animate their palettes).
